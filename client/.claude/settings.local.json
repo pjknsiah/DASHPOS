@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/pnsiah/MYPOSSOP/server/**)",
+      "Bash(node -r dotenv/config -e \"const { PrismaClient } = require\\(''@prisma/client''\\); const p = new PrismaClient\\(\\); p.$connect\\(\\).then\\(\\(\\) => { console.log\\(''DB connected OK''\\); p.$disconnect\\(\\); }\\).catch\\(e => console.error\\(''DB error:'', e.message\\)\\);\")",
+      "Bash(nc:*)"
+    ]
+  }
+}
