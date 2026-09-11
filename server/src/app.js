@@ -16,6 +16,7 @@ const customerRoutes = require('./routes/customers')
 const reportRoutes = require('./routes/reports')
 const userRoutes = require('./routes/users')
 const settingsRoutes = require('./routes/settings')
+const paymentRoutes = require('./routes/payments')
 
 const app = express()
 
@@ -30,8 +31,11 @@ app.use(
   })
 )
 
-// Request parsing
-app.use(express.json({ limit: '10mb' }))
+// Request parsing — capture rawBody for Paystack webhook signature verification
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf) => { req.rawBody = buf.toString() },
+}))
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())
 
@@ -59,6 +63,7 @@ app.use('/api/customers', customerRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/users', userRoutes)
 app.use('/api/settings', settingsRoutes)
+app.use('/api/payments', paymentRoutes)
 
 // 404 handler
 app.use((req, res) => {

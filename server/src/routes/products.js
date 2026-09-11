@@ -48,6 +48,11 @@ const categoryValidation = [
 // All routes require authentication
 router.use(authenticate)
 
+// Category routes — must be before /:id to avoid being shadowed
+router.get('/categories', productController.listCategories)
+router.post('/categories', authorize(['ADMIN', 'MANAGER']), categoryValidation, validate, productController.createCategory)
+router.put('/categories/:id', authorize(['ADMIN', 'MANAGER']), param('id').isUUID().withMessage('Invalid category ID'), categoryValidation, validate, productController.updateCategory)
+
 // Product routes
 router.get('/', listProductsValidation(), validate, productController.listProducts)
 router.get('/barcode/:code', productController.getProductByBarcode)
@@ -55,11 +60,6 @@ router.get('/:id', param('id').isUUID().withMessage('Invalid product ID'), valid
 router.post('/', authorize(['ADMIN', 'MANAGER']), upload.single('image'), productValidation, validate, productController.createProduct)
 router.put('/:id', authorize(['ADMIN', 'MANAGER']), upload.single('image'), updateProductValidation(), validate, productController.updateProduct)
 router.delete('/:id', authorize(['ADMIN']), param('id').isUUID().withMessage('Invalid product ID'), validate, productController.deleteProduct)
-
-// Category routes
-router.get('/categories/list', productController.listCategories)
-router.post('/categories', authorize(['ADMIN', 'MANAGER']), categoryValidation, validate, productController.createCategory)
-router.put('/categories/:id', authorize(['ADMIN', 'MANAGER']), param('id').isUUID().withMessage('Invalid category ID'), categoryValidation, validate, productController.updateCategory)
 
 function listProductsValidation() {
   return [

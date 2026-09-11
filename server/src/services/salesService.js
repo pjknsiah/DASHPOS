@@ -1,6 +1,7 @@
 const prisma = require('../utils/prismaClient')
 const generateTransactionId = require('../utils/generateTransactionId')
 const { NotFoundError, ValidationError, AppError } = require('../utils/errors')
+const { verifyTransaction } = require('./paystackService')
 
 async function createSale({ items, customer_id, payment_method, amount_paid, discount_amount = 0, notes, reference }, userId) {
   // Step 1: Validate all items exist and have sufficient stock
@@ -52,10 +53,35 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
 
   // Validate payment
   const amountPaid = parseFloat(amount_paid)
-  if (payment_method === 'CASH' && amountPaid < totalAmount) {
-    throw new ValidationError('Insufficient payment', [
-      { field: 'amount_paid', message: `Amount paid (${amountPaid}) is less than total (${totalAmount})` },
-    ])
+  if (payment_method === 'CASH') {
+    if (amountPaid < totalAmount) {
+      throw new ValidationError('Insufficient payment', [
+        { field: 'amount_paid', message: `Amount paid (${amountPaid}) is less than total (${totalAmount})` },
+      ])
+    }
+  } else {
+    // CARD or MOBILE_MONEY — verify via Paystack before proceeding
+    if (!reference) {
+      throw new ValidationError('Payment reference required', [
+        { field: 'reference', message: 'A Paystack reference is required for card/mobile money payments' },
+      ])
+    }
+
+    const paystackData = await verifyTransaction(reference)
+
+    if (paystackData.status !== 'success') {
+      throw new ValidationError('Payment not successful', [
+        { field: 'reference', message: `Paystack payment status is "${paystackData.status}". Only successful payments are accepted.` },
+      ])
+    }
+
+    // Amount tolerance: allow up to 1 pesewa rounding difference
+    const paidInGHS = paystackData.amount / 100
+    if (Math.abs(paidInGHS - totalAmount) > 0.01) {
+      throw new ValidationError('Payment amount mismatch', [
+        { field: 'amount_paid', message: `Paystack amount (GH₵ ${paidInGHS.toFixed(2)}) does not match sale total (GH₵ ${totalAmount.toFixed(2)})` },
+      ])
+    }
   }
 
   const changeGiven = payment_method === 'CASH' ? parseFloat((amountPaid - totalAmount).toFixed(2)) : 0

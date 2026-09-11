@@ -4,6 +4,7 @@ import { useCart } from '../context/CartContext'
 import { productsService } from '../services/products'
 import { salesService } from '../services/sales'
 import { customersService } from '../services/customers'
+import { paymentsService } from '../services/payments'
 import { formatCurrency } from '../utils/formatCurrency'
 import { Button } from '../components/Button'
 import { Input } from '../components/Input'
@@ -159,45 +160,95 @@ function Receipt({ sale, onClose }) {
 }
 
 // ─── Payment Modal ─────────────────────────────────────────────────────────────
-function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading }) {
+function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading, customer }) {
   const [method, setMethod] = useState('CASH')
   const [amountPaid, setAmountPaid] = useState('')
-  const [reference, setReference] = useState('')
+  const [email, setEmail] = useState('')
   const [errors, setErrors] = useState({})
+  const [paystackLoading, setPaystackLoading] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
       setMethod('CASH')
       setAmountPaid('')
-      setReference('')
+      setEmail(customer?.email || '')
       setErrors({})
+      setPaystackLoading(false)
     }
-  }, [isOpen])
+  }, [isOpen, customer])
 
   const change = method === 'CASH' ? parseFloat(amountPaid || 0) - total : 0
 
-  function validate() {
+  function validateCash() {
     const errs = {}
-    if (method === 'CASH') {
-      if (!amountPaid || parseFloat(amountPaid) < total) {
-        errs.amountPaid = `Amount must be at least ${formatCurrency(total)}`
-      }
-    } else {
-      if (!reference.trim()) {
-        errs.reference = 'Transaction reference is required'
-      }
+    if (!amountPaid || parseFloat(amountPaid) < total) {
+      errs.amountPaid = `Amount must be at least ${formatCurrency(total)}`
     }
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
 
-  function handleConfirm() {
-    if (!validate()) return
-    onConfirm({
-      payment_method: method,
-      amount_paid: method === 'CASH' ? parseFloat(amountPaid) : total,
-      reference: method !== 'CASH' ? reference : undefined,
-    })
+  function validateEmail() {
+    const errs = {}
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      errs.email = 'A valid email is required for Paystack payments'
+    }
+    setErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
+  function handleCashConfirm() {
+    if (!validateCash()) return
+    onConfirm({ payment_method: 'CASH', amount_paid: parseFloat(amountPaid) })
+  }
+
+  async function handlePaystackPay() {
+    if (!validateEmail()) return
+    setPaystackLoading(true)
+
+    try {
+      // 1. Get a Paystack reference from our backend
+      const initRes = await paymentsService.initialize(total, email.trim(), {
+        pos_cashier: true,
+        payment_method: method,
+      })
+      const { reference, access_code } = initRes.data.data
+
+      // 2. Open Paystack popup (loaded via CDN script in index.html)
+      const PaystackPop = window.PaystackPop
+      if (!PaystackPop) {
+        toast.error('Paystack script not loaded. Check your internet connection.')
+        setPaystackLoading(false)
+        return
+      }
+
+      const handler = PaystackPop.setup({
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        email: email.trim(),
+        amount: Math.round(total * 100), // pesewas
+        currency: 'GHS',
+        ref: reference,
+        access_code,
+        onSuccess(transaction) {
+          // 3. Pass reference back — backend will verify before completing sale
+          onConfirm({
+            payment_method: method,
+            amount_paid: total,
+            reference: transaction.reference,
+          })
+        },
+        onCancel() {
+          toast('Payment cancelled.')
+          setPaystackLoading(false)
+        },
+      })
+
+      handler.openIframe()
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || 'Failed to initialize Paystack payment'
+      toast.error(msg)
+      setPaystackLoading(false)
+    }
   }
 
   const methods = [
@@ -205,6 +256,8 @@ function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading }) {
     { value: 'MOBILE_MONEY', label: 'Mobile Money' },
     { value: 'CARD', label: 'Card' },
   ]
+
+  const isPaystack = method === 'MOBILE_MONEY' || method === 'CARD'
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Process Payment" size="sm">
@@ -257,22 +310,39 @@ function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading }) {
           </div>
         )}
 
-        {/* Mobile Money / Card: reference */}
-        {(method === 'MOBILE_MONEY' || method === 'CARD') && (
-          <Input
-            label="Transaction Reference"
-            value={reference}
-            onChange={(e) => { setReference(e.target.value); setErrors({}) }}
-            placeholder="e.g. MTN-123456 or POS-789"
-            error={errors.reference}
-          />
+        {/* Paystack: email + pay button */}
+        {isPaystack && (
+          <div className="space-y-3">
+            <Input
+              label="Customer Email (required for Paystack)"
+              type="email"
+              value={email}
+              onChange={(e) => { setEmail(e.target.value); setErrors({}) }}
+              placeholder="customer@example.com"
+              error={errors.email}
+            />
+            <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+              <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20A10 10 0 0012 2z" />
+              </svg>
+              <span>A Paystack popup will open for the customer to complete payment.</span>
+            </div>
+          </div>
         )}
 
         <div className="flex gap-3 pt-2">
-          <Button variant="secondary" className="flex-1" onClick={onClose} disabled={isLoading}>Cancel</Button>
-          <Button variant="success" className="flex-1" onClick={handleConfirm} isLoading={isLoading}>
-            Confirm Payment
+          <Button variant="secondary" className="flex-1" onClick={onClose} disabled={isLoading || paystackLoading}>
+            Cancel
           </Button>
+          {method === 'CASH' ? (
+            <Button variant="success" className="flex-1" onClick={handleCashConfirm} isLoading={isLoading}>
+              Confirm Payment
+            </Button>
+          ) : (
+            <Button variant="success" className="flex-1" onClick={handlePaystackPay} isLoading={paystackLoading || isLoading}>
+              Pay with Paystack
+            </Button>
+          )}
         </div>
       </div>
     </Modal>
@@ -415,8 +485,10 @@ export default function POSPage() {
   const { items, cartDiscount, customer, subtotal, total, addItem, removeItem, updateQuantity, updateDiscount, setCartDiscount, setCustomer, clearCart } = useCart()
 
   const [searchQuery, setSearchQuery] = useState('')
-  const [products, setProducts] = useState([])
-  const [isSearching, setIsSearching] = useState(false)
+  const [allProducts, setAllProducts] = useState([])
+  const [categories, setCategories] = useState([])
+  const [selectedCategory, setSelectedCategory] = useState('ALL')
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [showReceiptModal, setShowReceiptModal] = useState(false)
   const [showCustomerModal, setShowCustomerModal] = useState(false)
@@ -428,10 +500,40 @@ export default function POSPage() {
   const barcodeBufferRef = useRef('')
   const barcodeTimerRef = useRef(null)
 
-  // Focus search on mount
+  // Load all products and categories on mount
   useEffect(() => {
     searchRef.current?.focus()
+
+    async function loadInitialData() {
+      setIsLoadingProducts(true)
+      try {
+        const [productsRes, categoriesRes] = await Promise.all([
+          productsService.list({ per_page: 100, is_active: true }),
+          productsService.categories(),
+        ])
+        setAllProducts(productsRes.data?.data || [])
+        setCategories(categoriesRes.data?.data || [])
+      } catch {
+        toast.error('Failed to load products')
+      } finally {
+        setIsLoadingProducts(false)
+      }
+    }
+
+    loadInitialData()
   }, [])
+
+  // Derived: products filtered by search query and selected category
+  const products = allProducts.filter((p) => {
+    const matchesCategory = selectedCategory === 'ALL' || p.category_id === selectedCategory
+    if (!searchQuery.trim()) return matchesCategory
+    const q = searchQuery.toLowerCase()
+    return matchesCategory && (
+      p.name.toLowerCase().includes(q) ||
+      p.sku.toLowerCase().includes(q) ||
+      (p.barcode && p.barcode.includes(q))
+    )
+  })
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -481,28 +583,13 @@ export default function POSPage() {
     }
   }
 
-  // Text search with debounce
-  useEffect(() => {
-    if (!searchQuery.trim()) { setProducts([]); return }
-    setIsSearching(true)
-    const id = setTimeout(async () => {
-      try {
-        const res = await productsService.list({ search: searchQuery, per_page: 20, is_active: true })
-        setProducts(res.data?.data || [])
-      } catch {
-        setProducts([])
-      } finally {
-        setIsSearching(false)
-      }
-    }, 300)
-    return () => clearTimeout(id)
-  }, [searchQuery])
-
   function handleAddProduct(product) {
     if (product.quantity === 0) { toast.error(`${product.name} is out of stock`); return }
     addItem(product)
-    setSearchQuery('')
-    setProducts([])
+    // Update local stock count so the grid reflects it immediately
+    setAllProducts((prev) =>
+      prev.map((p) => p.id === product.id ? { ...p, quantity: p.quantity - 1 } : p)
+    )
     searchRef.current?.focus()
   }
 
@@ -575,7 +662,7 @@ export default function POSPage() {
           />
           {searchQuery && (
             <button
-              onClick={() => { setSearchQuery(''); setProducts([]); searchRef.current?.focus() }}
+              onClick={() => { setSearchQuery(''); searchRef.current?.focus() }}
               className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-gray-600"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -585,45 +672,66 @@ export default function POSPage() {
           )}
         </div>
 
+        {/* Category filter tabs */}
+        {!isLoadingProducts && categories.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            <button
+              onClick={() => setSelectedCategory('ALL')}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                selectedCategory === 'ALL'
+                  ? 'bg-primary-600 text-white'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300'
+              }`}
+            >
+              All
+            </button>
+            {categories.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategory(cat.id)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                  selectedCategory === cat.id
+                    ? 'bg-primary-600 text-white'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300'
+                }`}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Product grid */}
         <div className="flex-1 overflow-y-auto">
-          {isSearching && (
+          {isLoadingProducts && (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {Array.from({ length: 8 }).map((_, i) => (
+              {Array.from({ length: 12 }).map((_, i) => (
                 <div key={i} className="bg-white rounded-xl p-3 animate-pulse">
-                  <div className="h-4 bg-gray-200 rounded mb-2" />
+                  <div className="w-full h-20 bg-gray-200 rounded-lg mb-2" />
+                  <div className="h-4 bg-gray-200 rounded mb-1" />
                   <div className="h-3 bg-gray-100 rounded w-2/3" />
                 </div>
               ))}
             </div>
           )}
 
-          {!isSearching && searchQuery && products.length === 0 && (
+          {!isLoadingProducts && products.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400">
               <svg className="w-12 h-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="text-sm">No products found for "{searchQuery}"</p>
+              <p className="text-sm">{searchQuery ? `No products found for "${searchQuery}"` : 'No products in this category'}</p>
             </div>
           )}
 
-          {!isSearching && !searchQuery && (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-300">
-              <svg className="w-16 h-16 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <p className="text-base">Search for a product or scan a barcode</p>
-            </div>
-          )}
-
-          {!isSearching && products.length > 0 && (
+          {!isLoadingProducts && products.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {products.map((product) => (
                 <button
                   key={product.id}
                   onClick={() => handleAddProduct(product)}
                   disabled={product.quantity === 0}
-                  className={`bg-white rounded-xl p-3 text-left shadow-sm border transition hover:shadow-md hover:border-primary-300 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                  className={`bg-white rounded-xl p-3 text-left shadow-sm border transition hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
                     product.quantity === 0 ? 'border-gray-100' : 'border-gray-100 hover:border-primary-200'
                   }`}
                 >
@@ -777,6 +885,7 @@ export default function POSPage() {
         total={total}
         onConfirm={handlePaymentConfirm}
         isLoading={isSubmitting}
+        customer={customer}
       />
 
       <Modal
