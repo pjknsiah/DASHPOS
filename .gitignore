@@ -49,3 +49,9 @@ server/prisma/migrations/*.sql.bak
 # Backup files
 backups/
 *.dump
+
+# Claude
+CLAUDE.md
+claude.md
+.claude/
+
