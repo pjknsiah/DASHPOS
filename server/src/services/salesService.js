@@ -67,6 +67,14 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
       ])
     }
 
+    // A successful Paystack reference may only pay for one sale
+    const existingPayment = await prisma.payment.findFirst({ where: { reference } })
+    if (existingPayment) {
+      throw new ValidationError('Payment reference already used', [
+        { field: 'reference', message: 'This Paystack reference has already been used for another sale' },
+      ])
+    }
+
     const paystackData = await verifyTransaction(reference)
 
     if (paystackData.status !== 'success') {
@@ -129,14 +137,26 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
       },
     })
 
-    // Deduct stock and create inventory logs
+    // Deduct stock and create inventory logs. The decrement is conditional on
+    // there still being enough stock, so concurrent sales cannot oversell.
     for (const item of saleItems) {
-      const product = productMap.get(item.product_id)
-      const newQty = product.quantity - item.quantity
+      const { count } = await tx.product.updateMany({
+        where: { id: item.product_id, quantity: { gte: item.quantity } },
+        data: { quantity: { decrement: item.quantity } },
+      })
 
-      await tx.product.update({
+      if (count === 0) {
+        throw new ValidationError('Insufficient stock', [
+          {
+            field: 'items',
+            message: `Insufficient stock for "${item.product_name}". It may have just been sold at another till.`,
+          },
+        ])
+      }
+
+      const { quantity: newQty } = await tx.product.findUnique({
         where: { id: item.product_id },
-        data: { quantity: newQty },
+        select: { quantity: true },
       })
 
       await tx.inventoryLog.create({
@@ -144,7 +164,7 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
           product_id: item.product_id,
           change_type: 'SALE',
           quantity_change: -item.quantity,
-          previous_quantity: product.quantity,
+          previous_quantity: newQty + item.quantity,
           new_quantity: newQty,
           user_id: userId,
           notes: `Sale ${transaction_id}`,
