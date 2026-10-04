@@ -465,6 +465,58 @@ describe('POST /api/sales — concurrency and payment reuse', () => {
     expect(saleCount).toBe(1)
   })
 
+  it('gives sales made at the same moment distinct transaction IDs', async () => {
+    const sell = () =>
+      request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({
+          items: [{ product_id: testProduct.id, quantity: 1 }],
+          payment_method: 'CASH',
+          amount_paid: 10.0,
+        })
+
+    const results = await Promise.all([sell(), sell(), sell()])
+
+    results.forEach((r) => expect(r.status).toBe(201))
+    const ids = results.map((r) => r.body.data.transaction_id)
+    ids.forEach((id) => expect(id).toMatch(/^TXN-\d{8}-\d{4}$/))
+    expect(new Set(ids).size).toBe(3)
+  })
+
+  it('refunds a sale only once when two refund requests arrive together', async () => {
+    const saleRes = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        items: [{ product_id: testProduct.id, quantity: 3 }],
+        payment_method: 'CASH',
+        amount_paid: 30.0,
+      })
+    expect(saleRes.status).toBe(201)
+    const { id: saleId, transaction_id } = saleRes.body.data
+
+    const stockBefore = (await prisma.product.findUnique({ where: { id: testProduct.id } })).quantity
+
+    const refund = () =>
+      request(app)
+        .post(`/api/sales/${saleId}/refund`)
+        .set('Authorization', `Bearer ${managerToken}`)
+
+    const results = await Promise.all([refund(), refund()])
+    const statuses = results.map((r) => r.status).sort()
+    expect(statuses).toEqual([200, 422])
+
+    // Stock comes back once, not twice
+    const stockAfter = (await prisma.product.findUnique({ where: { id: testProduct.id } })).quantity
+    expect(stockAfter).toBe(stockBefore + 3)
+
+    const returnLogs = await prisma.inventoryLog.count({
+      where: { change_type: 'RETURN', notes: `Refund for sale ${transaction_id}` },
+    })
+    expect(returnLogs).toBe(1)
+  })
+
   it('rejects a Paystack reference that has already paid for a sale', async () => {
     const sale = {
       items: [{ product_id: testProduct.id, quantity: 1 }],
