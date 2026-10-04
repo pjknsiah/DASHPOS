@@ -4,6 +4,25 @@ const app = require('../app')
 const prisma = require('../utils/prismaClient')
 const bcrypt = require('bcrypt')
 
+// Don't call the real Paystack API. By default every reference verifies as a
+// successful GH₵ 10.00 payment, which matches one unit of test product A.
+jest.mock('../services/paystackService', () => ({
+  initializeTransaction: jest.fn(),
+  verifyTransaction: jest.fn(),
+  validateWebhookSignature: jest.fn(),
+}))
+const { verifyTransaction } = require('../services/paystackService')
+
+// Real ID generator by default; tests can override it per call
+jest.mock('../utils/generateTransactionId', () =>
+  jest.fn(jest.requireActual('../utils/generateTransactionId'))
+)
+const generateTransactionId = require('../utils/generateTransactionId')
+
+beforeEach(() => {
+  verifyTransaction.mockResolvedValue({ status: 'success', amount: 1000 })
+})
+
 let cashierToken
 let managerToken
 let testCategory
@@ -125,9 +144,9 @@ describe('POST /api/sales — create sale', () => {
     expect(sale.payment_method).toBe('CASH')
     expect(sale.payment_status).toBe('COMPLETED')
     expect(parseFloat(sale.total_amount)).toBe(20.0)
-    expect(sale.sale_items).toHaveLength(1)
-    expect(sale.sale_items[0].unit_price).toBe('10.00')
-    expect(sale.payments[0].change_given).toBe('10.00')
+    expect(sale.items).toHaveLength(1)
+    expect(parseFloat(sale.items[0].unit_price)).toBe(10.0)
+    expect(parseFloat(sale.payment.change_given)).toBe(10.0)
 
     // Verify stock was deducted
     const updatedProduct = await prisma.product.findUnique({ where: { id: testProduct.id } })
@@ -155,7 +174,7 @@ describe('POST /api/sales — create sale', () => {
 
     expect(res.status).toBe(201)
     expect(res.body.data.payment_method).toBe('MOBILE_MONEY')
-    expect(res.body.data.payments[0].reference).toBe('MOMO-REF-12345')
+    expect(res.body.data.payment.reference).toBe('MOMO-REF-12345')
   })
 
   it('awards loyalty points when customer is linked', async () => {
@@ -297,8 +316,8 @@ describe('GET /api/sales/:id', () => {
 
     expect(res.status).toBe(200)
     expect(res.body.data.id).toBe(saleId)
-    expect(res.body.data.sale_items).toBeDefined()
-    expect(res.body.data.payments).toBeDefined()
+    expect(res.body.data.items).toBeDefined()
+    expect(res.body.data.payment).toBeDefined()
     expect(res.body.data.user).toBeDefined()
   })
 
@@ -404,5 +423,74 @@ describe('POST /api/sales/:id/refund', () => {
       .set('Authorization', `Bearer ${cashierToken}`)
 
     expect(res.status).toBe(403)
+  })
+})
+
+describe('POST /api/sales — concurrency and payment reuse', () => {
+  it('sells the last unit only once when two tills check out at the same time', async () => {
+    const lastUnit = await prisma.product.create({
+      data: {
+        name: 'Sales Test Last Unit',
+        sku: 'SALES-TEST-LAST',
+        category_id: testCategory.id,
+        price: 10.0,
+        quantity: 1,
+      },
+    })
+
+    // Give each sale a distinct ID so the stock check is what decides the outcome
+    const runId = Date.now()
+    generateTransactionId
+      .mockResolvedValueOnce(`TXN-RACE-${runId}-A`)
+      .mockResolvedValueOnce(`TXN-RACE-${runId}-B`)
+
+    const sell = () =>
+      request(app)
+        .post('/api/sales')
+        .set('Authorization', `Bearer ${cashierToken}`)
+        .send({
+          items: [{ product_id: lastUnit.id, quantity: 1 }],
+          payment_method: 'CASH',
+          amount_paid: 10.0,
+        })
+
+    const results = await Promise.all([sell(), sell()])
+    const statuses = results.map((r) => r.status).sort()
+    expect(statuses).toEqual([201, 422])
+
+    const product = await prisma.product.findUnique({ where: { id: lastUnit.id } })
+    expect(product.quantity).toBe(0)
+
+    const saleCount = await prisma.saleItem.count({ where: { product_id: lastUnit.id } })
+    expect(saleCount).toBe(1)
+  })
+
+  it('rejects a Paystack reference that has already paid for a sale', async () => {
+    const sale = {
+      items: [{ product_id: testProduct.id, quantity: 1 }],
+      payment_method: 'MOBILE_MONEY',
+      amount_paid: 10.0,
+      reference: 'MOMO-REUSE-TEST-001',
+    }
+
+    const first = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send(sale)
+    expect(first.status).toBe(201)
+
+    const stockAfterFirst = (await prisma.product.findUnique({ where: { id: testProduct.id } })).quantity
+
+    const second = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send(sale)
+
+    expect(second.status).toBe(422)
+    expect(second.body.error.message).toMatch(/already used/i)
+
+    // The rejected sale must not have touched stock
+    const stockAfterSecond = (await prisma.product.findUnique({ where: { id: testProduct.id } })).quantity
+    expect(stockAfterSecond).toBe(stockAfterFirst)
   })
 })
