@@ -102,10 +102,18 @@ Run this command twice — once for `JWT_ACCESS_SECRET` and once for `JWT_REFRES
 ### Run database migrations
 
 ```bash
-npx prisma migrate dev --name init
+npx prisma migrate deploy
 ```
 
-This creates all tables, indexes, and relationships defined in `prisma/schema.prisma`.
+This applies the migrations committed in `prisma/migrations/`, creating all tables, indexes, and relationships.
+
+If your database was created earlier with `prisma db push` or `migrate dev --name init`, don't run the baseline again. Mark it as applied instead:
+
+```bash
+npx prisma migrate resolve --applied 0_init
+```
+
+When you change `prisma/schema.prisma`, create a migration with `npx prisma migrate dev --name describe_your_change` and commit it. `migrate dev` needs a database user that can create databases (for Prisma's temporary shadow database). If you get `permission denied to create database`, grant it with `ALTER USER <user> CREATEDB;`.
 
 ### Seed the database
 
@@ -282,7 +290,7 @@ sudo systemctl start postgresql
 The database schema is out of sync. Run:
 
 ```bash
-npx prisma migrate dev
+npx prisma migrate deploy
 ```
 
 ### `Error: P1001: Can't reach database server`

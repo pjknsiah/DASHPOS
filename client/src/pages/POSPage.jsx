@@ -463,9 +463,10 @@ function CartItem({ item, onUpdate, onRemove, onDiscountChange }) {
           <input
             type="number"
             min={0}
+            max={item.price * item.quantity}
             step="0.01"
             value={item.discount || 0}
-            onChange={(e) => onDiscountChange(item.product_id, parseFloat(e.target.value) || 0)}
+            onChange={(e) => onDiscountChange(item.product_id, Math.min(parseFloat(e.target.value) || 0, item.price * item.quantity))}
             className="w-16 text-right text-xs border border-gray-200 rounded py-0.5 px-1 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
         </div>
@@ -836,9 +837,10 @@ export default function POSPage() {
             <input
               type="number"
               min={0}
+              max={subtotal}
               step="0.01"
               value={cartDiscount || ''}
-              onChange={(e) => setCartDiscount(parseFloat(e.target.value) || 0)}
+              onChange={(e) => setCartDiscount(Math.min(parseFloat(e.target.value) || 0, subtotal))}
               placeholder="0.00"
               className="flex-1 text-right border border-gray-200 rounded-lg py-1.5 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
