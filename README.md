@@ -105,8 +105,8 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 # Create the database
 createdb pos_db
 
-# Run migrations
-npx prisma migrate dev --name init
+# Apply the committed migrations
+npx prisma migrate deploy
 
 # Seed with sample data (50+ products, 10 customers, 20 sample sales)
 npx prisma db seed
@@ -164,8 +164,16 @@ npm run dev   # starts on http://localhost:5173
 ## Database Setup Commands
 
 ```bash
-# Run all pending migrations
-npx prisma migrate dev
+# Apply all pending migrations
+npx prisma migrate deploy
+
+# After editing schema.prisma, create a new migration
+# (needs a database user with CREATEDB permission for Prisma's shadow database)
+npx prisma migrate dev --name describe_your_change
+
+# Existing database created before migrations were committed (with db push):
+# mark the baseline as applied instead of re-creating tables
+npx prisma migrate resolve --applied 0_init
 
 # Seed the database with sample data
 npx prisma db seed
