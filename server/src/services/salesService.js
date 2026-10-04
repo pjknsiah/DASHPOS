@@ -34,7 +34,16 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
     const product = productMap.get(item.product_id)
     const unit_price = parseFloat(product.price)
     const itemDiscount = parseFloat(item.discount || 0)
-    const lineTotal = unit_price * item.quantity - itemDiscount
+    const lineGross = unit_price * item.quantity
+    if (itemDiscount > lineGross) {
+      throw new ValidationError('Discount too large', [
+        {
+          field: 'items',
+          message: `Discount on "${product.name}" (${itemDiscount.toFixed(2)}) is more than the line total (${lineGross.toFixed(2)})`,
+        },
+      ])
+    }
+    const lineTotal = lineGross - itemDiscount
     subtotal += lineTotal
     return {
       product_id: item.product_id,
@@ -47,6 +56,14 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
   })
 
   const discountAmt = parseFloat(discount_amount) || 0
+  if (discountAmt > parseFloat(subtotal.toFixed(2))) {
+    throw new ValidationError('Discount too large', [
+      {
+        field: 'discount_amount',
+        message: `Cart discount (${discountAmt.toFixed(2)}) is more than the subtotal (${subtotal.toFixed(2)})`,
+      },
+    ])
+  }
   const taxableAmount = subtotal - discountAmt
   const taxAmount = parseFloat((taxableAmount * (taxRate / 100)).toFixed(2))
   const totalAmount = parseFloat((taxableAmount + taxAmount).toFixed(2))

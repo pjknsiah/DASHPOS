@@ -546,3 +546,44 @@ describe('POST /api/sales — concurrency and payment reuse', () => {
     expect(stockAfterSecond).toBe(stockAfterFirst)
   })
 })
+
+describe('POST /api/sales — discount limits', () => {
+  const sellWith = (body) =>
+    request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ payment_method: 'CASH', amount_paid: 100.0, ...body })
+
+  it('rejects an item discount larger than the line total', async () => {
+    const before = (await prisma.product.findUnique({ where: { id: testProduct.id } })).quantity
+
+    const res = await sellWith({ items: [{ product_id: testProduct.id, quantity: 2, discount: 20.01 }] })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.details[0].field).toBe('items')
+
+    const after = (await prisma.product.findUnique({ where: { id: testProduct.id } })).quantity
+    expect(after).toBe(before)
+  })
+
+  it('rejects a cart discount larger than the subtotal', async () => {
+    const res = await sellWith({
+      items: [{ product_id: testProduct.id, quantity: 1, discount: 2 }],
+      discount_amount: 8.01,
+    })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.details[0].field).toBe('discount_amount')
+  })
+
+  it('allows discounts that bring the total to exactly zero', async () => {
+    const res = await sellWith({
+      items: [{ product_id: testProduct.id, quantity: 1, discount: 4 }],
+      discount_amount: 6,
+      amount_paid: 0,
+    })
+
+    expect(res.status).toBe(201)
+    expect(parseFloat(res.body.data.total_amount)).toBe(0)
+  })
+})
