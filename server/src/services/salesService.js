@@ -94,10 +94,9 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
 
   const changeGiven = payment_method === 'CASH' ? parseFloat((amountPaid - totalAmount).toFixed(2)) : 0
 
-  const transaction_id = await generateTransactionId()
-
-  // Step 3–6: Execute in a single DB transaction
-  const sale = await prisma.$transaction(async (tx) => {
+  // Step 3–6: Execute in a single DB transaction, retried with a fresh
+  // transaction ID if a concurrent sale claimed the same one
+  const sale = await withUniqueTransactionId((transaction_id) => prisma.$transaction(async (tx) => {
     // Create Sale
     const newSale = await tx.sale.create({
       data: {
@@ -185,10 +184,24 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
     }
 
     return newSale
-  })
+  }))
 
   // Fetch complete sale with relations
   return getSaleById(sale.id)
+}
+
+const MAX_TRANSACTION_ID_ATTEMPTS = 5
+
+async function withUniqueTransactionId(createSaleWithId) {
+  for (let attempt = 1; ; attempt++) {
+    const transaction_id = await generateTransactionId()
+    try {
+      return await createSaleWithId(transaction_id)
+    } catch (err) {
+      const isIdConflict = err.code === 'P2002' && String(err.meta?.target).includes('transaction_id')
+      if (!isIdConflict || attempt >= MAX_TRANSACTION_ID_ATTEMPTS) throw err
+    }
+  }
 }
 
 async function getSaleById(id) {
@@ -254,20 +267,25 @@ async function processRefund(saleId, userId) {
   }
 
   await prisma.$transaction(async (tx) => {
-    // Update sale status
-    await tx.sale.update({
-      where: { id: saleId },
+    // Mark the sale refunded only if it is still COMPLETED. If a concurrent
+    // refund got there first, nothing is updated and this one is rejected.
+    const { count } = await tx.sale.updateMany({
+      where: { id: saleId, payment_status: 'COMPLETED' },
       data: { payment_status: 'REFUNDED' },
     })
 
+    if (count === 0) {
+      throw new ValidationError('Sale already refunded', [
+        { field: 'sale_id', message: 'This sale has already been refunded' },
+      ])
+    }
+
     // Restore stock and create return inventory logs
     for (const item of sale.sale_items) {
-      const product = await tx.product.findUnique({ where: { id: item.product_id } })
-      const newQty = product.quantity + item.quantity
-
-      await tx.product.update({
+      const { quantity: newQty } = await tx.product.update({
         where: { id: item.product_id },
-        data: { quantity: newQty },
+        data: { quantity: { increment: item.quantity } },
+        select: { quantity: true },
       })
 
       await tx.inventoryLog.create({
@@ -275,7 +293,7 @@ async function processRefund(saleId, userId) {
           product_id: item.product_id,
           change_type: 'RETURN',
           quantity_change: item.quantity,
-          previous_quantity: product.quantity,
+          previous_quantity: newQty - item.quantity,
           new_quantity: newQty,
           user_id: userId,
           notes: `Refund for sale ${sale.transaction_id}`,
@@ -288,9 +306,14 @@ async function processRefund(saleId, userId) {
       const loyaltyRate = await getSettingValue('loyalty_points_rate', 10)
       const pointsToDeduct = Math.floor(parseFloat(sale.total_amount) / loyaltyRate)
       if (pointsToDeduct > 0) {
-        const customer = await tx.customer.findUnique({ where: { id: sale.customer_id } })
-        const newPoints = Math.max(0, customer.loyalty_points - pointsToDeduct)
-        await tx.customer.update({ where: { id: sale.customer_id }, data: { loyalty_points: newPoints } })
+        // Deduct atomically, flooring at zero if the customer has already spent the points
+        const { count: deducted } = await tx.customer.updateMany({
+          where: { id: sale.customer_id, loyalty_points: { gte: pointsToDeduct } },
+          data: { loyalty_points: { decrement: pointsToDeduct } },
+        })
+        if (deducted === 0) {
+          await tx.customer.update({ where: { id: sale.customer_id }, data: { loyalty_points: 0 } })
+        }
       }
     }
   })

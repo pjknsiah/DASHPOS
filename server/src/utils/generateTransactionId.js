@@ -2,26 +2,29 @@ const prisma = require('./prismaClient')
 
 /**
  * Generate a human-readable transaction ID in format TXN-YYYYMMDD-NNNN
- * Uses the count of today's sales to determine the sequence number.
+ * The sequence continues from the highest ID issued today, so deleted sales
+ * never cause an ID to be handed out twice. Concurrent sales can still pick
+ * the same next number; the caller retries on the unique constraint.
  */
 async function generateTransactionId() {
   const now = new Date()
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
   const day = String(now.getDate()).padStart(2, '0')
-  const datePart = `${year}${month}${day}`
+  const prefix = `TXN-${year}${month}${day}-`
 
-  const startOfDay = new Date(year, now.getMonth(), now.getDate(), 0, 0, 0)
-  const endOfDay = new Date(year, now.getMonth(), now.getDate(), 23, 59, 59, 999)
-
-  const count = await prisma.sale.count({
-    where: {
-      created_at: { gte: startOfDay, lte: endOfDay },
-    },
+  const todaysIds = await prisma.sale.findMany({
+    where: { transaction_id: { startsWith: prefix } },
+    select: { transaction_id: true },
   })
 
-  const sequence = String(count + 1).padStart(4, '0')
-  return `TXN-${datePart}-${sequence}`
+  const lastSequence = todaysIds.reduce((max, { transaction_id }) => {
+    const seq = parseInt(transaction_id.slice(prefix.length), 10)
+    return Number.isNaN(seq) ? max : Math.max(max, seq)
+  }, 0)
+
+  const sequence = String(lastSequence + 1).padStart(4, '0')
+  return `${prefix}${sequence}`
 }
 
 module.exports = generateTransactionId
