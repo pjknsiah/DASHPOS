@@ -20,7 +20,10 @@ router.post(
   authorize(['ADMIN', 'MANAGER']),
   [
     body('product_id').isUUID().withMessage('Valid product ID required'),
-    body('quantity_change').isInt().not().equals(0).withMessage('Quantity change must be a non-zero integer'),
+    body('quantity_change')
+      .isInt()
+      .custom((value) => Number(value) !== 0)
+      .withMessage('Quantity change must be a non-zero integer'),
   ],
   validate,
   inventoryController.adjustStock
