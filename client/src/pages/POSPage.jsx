@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useEffectEvent, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { useCart } from '../context/CartContext'
 import { productsService } from '../services/products'
@@ -66,29 +66,29 @@ function Receipt({ sale, onClose }) {
             <div key={i} className="flex justify-between py-0.5">
               <span className="w-2/5 truncate">{item.product?.name || item.name}</span>
               <span className="w-1/5 text-right">{item.quantity}</span>
-              <span className="w-1/5 text-right">{formatCurrency(item.unit_price)}</span>
-              <span className="w-1/5 text-right">{formatCurrency(item.total)}</span>
+              <span className="w-1/5 text-right">{fmt(item.unit_price)}</span>
+              <span className="w-1/5 text-right">{fmt(item.total)}</span>
             </div>
           ))}
         </div>
 
         <div className="border-t border-dashed border-gray-400 pt-2 text-xs space-y-1">
-          <div className="flex justify-between"><span>Subtotal:</span><span>{formatCurrency(subtotal)}</span></div>
+          <div className="flex justify-between"><span>Subtotal:</span><span>{fmt(subtotal)}</span></div>
           {parseFloat(discount_amount) > 0 && (
-            <div className="flex justify-between text-danger-600"><span>Discount:</span><span>-{formatCurrency(discount_amount)}</span></div>
+            <div className="flex justify-between text-danger-600"><span>Discount:</span><span>-{fmt(discount_amount)}</span></div>
           )}
           {parseFloat(tax_amount) > 0 && (
-            <div className="flex justify-between"><span>Tax:</span><span>{formatCurrency(tax_amount)}</span></div>
+            <div className="flex justify-between"><span>Tax:</span><span>{fmt(tax_amount)}</span></div>
           )}
           <div className="flex justify-between font-bold text-base border-t border-gray-300 pt-1 mt-1">
-            <span>TOTAL:</span><span>{formatCurrency(total_amount)}</span>
+            <span>TOTAL:</span><span>{fmt(total_amount)}</span>
           </div>
           <div className="flex justify-between"><span>Payment:</span><span>{payment_method}</span></div>
           {payment && (
             <>
-              <div className="flex justify-between"><span>Amount Paid:</span><span>{formatCurrency(payment.amount_paid)}</span></div>
+              <div className="flex justify-between"><span>Amount Paid:</span><span>{fmt(payment.amount_paid)}</span></div>
               {parseFloat(payment.change_given) > 0 && (
-                <div className="flex justify-between font-semibold"><span>Change:</span><span>{formatCurrency(payment.change_given)}</span></div>
+                <div className="flex justify-between font-semibold"><span>Change:</span><span>{fmt(payment.change_given)}</span></div>
               )}
               {payment.reference && (
                 <div className="flex justify-between"><span>Reference:</span><span>{payment.reference}</span></div>
@@ -127,19 +127,19 @@ function Receipt({ sale, onClose }) {
               <div key={i} className="flex justify-between">
                 <span className="w-2/5 truncate">{item.product?.name || item.name}</span>
                 <span className="w-1/5 text-right">{item.quantity}</span>
-                <span className="w-1/5 text-right">{formatCurrency(item.unit_price)}</span>
-                <span className="w-1/5 text-right">{formatCurrency(item.total)}</span>
+                <span className="w-1/5 text-right">{fmt(item.unit_price)}</span>
+                <span className="w-1/5 text-right">{fmt(item.total)}</span>
               </div>
             ))}
           </div>
           <div className="border-t border-dashed pt-2 text-xs space-y-0.5">
-            <div className="flex justify-between"><span>Subtotal:</span><span>{formatCurrency(subtotal)}</span></div>
-            {parseFloat(discount_amount) > 0 && <div className="flex justify-between"><span>Discount:</span><span>-{formatCurrency(discount_amount)}</span></div>}
-            {parseFloat(tax_amount) > 0 && <div className="flex justify-between"><span>Tax:</span><span>{formatCurrency(tax_amount)}</span></div>}
-            <div className="flex justify-between font-bold border-t pt-1"><span>TOTAL:</span><span>{formatCurrency(total_amount)}</span></div>
+            <div className="flex justify-between"><span>Subtotal:</span><span>{fmt(subtotal)}</span></div>
+            {parseFloat(discount_amount) > 0 && <div className="flex justify-between"><span>Discount:</span><span>-{fmt(discount_amount)}</span></div>}
+            {parseFloat(tax_amount) > 0 && <div className="flex justify-between"><span>Tax:</span><span>{fmt(tax_amount)}</span></div>}
+            <div className="flex justify-between font-bold border-t pt-1"><span>TOTAL:</span><span>{fmt(total_amount)}</span></div>
             <div className="flex justify-between"><span>Payment:</span><span>{payment_method}</span></div>
-            {payment?.amount_paid && <div className="flex justify-between"><span>Paid:</span><span>{formatCurrency(payment.amount_paid)}</span></div>}
-            {payment?.change_given > 0 && <div className="flex justify-between"><span>Change:</span><span>{formatCurrency(payment.change_given)}</span></div>}
+            {payment?.amount_paid && <div className="flex justify-between"><span>Paid:</span><span>{fmt(payment.amount_paid)}</span></div>}
+            {payment?.change_given > 0 && <div className="flex justify-between"><span>Change:</span><span>{fmt(payment.change_given)}</span></div>}
             {payment?.reference && <div className="flex justify-between"><span>Ref:</span><span>{payment.reference}</span></div>}
           </div>
           <div className="border-t border-dashed mt-2 pt-2 text-center text-xs">{settings.receipt_footer || 'Thank you for shopping with us!'}</div>
@@ -163,19 +163,10 @@ function Receipt({ sale, onClose }) {
 function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading, customer }) {
   const [method, setMethod] = useState('CASH')
   const [amountPaid, setAmountPaid] = useState('')
-  const [email, setEmail] = useState('')
+  // The parent mounts this modal only while it is open, so state starts fresh each time
+  const [email, setEmail] = useState(customer?.email || '')
   const [errors, setErrors] = useState({})
   const [paystackLoading, setPaystackLoading] = useState(false)
-
-  useEffect(() => {
-    if (isOpen) {
-      setMethod('CASH')
-      setAmountPaid('')
-      setEmail(customer?.email || '')
-      setErrors({})
-      setPaystackLoading(false)
-    }
-  }, [isOpen, customer])
 
   const change = method === 'CASH' ? parseFloat(amountPaid || 0) - total : 0
 
@@ -547,7 +538,10 @@ export default function POSPage() {
     return () => document.removeEventListener('keydown', onKey)
   }, [items.length])
 
-  // Barcode scanner detection: rapid keystrokes ending with Enter
+  // Barcode scanner detection: rapid keystrokes ending with Enter.
+  // useEffectEvent lets the once-registered listener always call the latest handler.
+  const onBarcodeScanned = useEffectEvent((barcode) => handleBarcodeSearch(barcode))
+
   useEffect(() => {
     function onKeyDown(e) {
       // Only intercept if search input is NOT focused (or it is focused)
@@ -555,7 +549,7 @@ export default function POSPage() {
         const barcode = barcodeBufferRef.current
         barcodeBufferRef.current = ''
         clearTimeout(barcodeTimerRef.current)
-        handleBarcodeSearch(barcode)
+        onBarcodeScanned(barcode)
         return
       }
       if (e.key.length === 1) {
@@ -881,14 +875,16 @@ export default function POSPage() {
       </div>
 
       {/* ── Modals ── */}
-      <PaymentModal
-        isOpen={showPaymentModal}
-        onClose={() => setShowPaymentModal(false)}
-        total={total}
-        onConfirm={handlePaymentConfirm}
-        isLoading={isSubmitting}
-        customer={customer}
-      />
+      {showPaymentModal && (
+        <PaymentModal
+          isOpen
+          onClose={() => setShowPaymentModal(false)}
+          total={total}
+          onConfirm={handlePaymentConfirm}
+          isLoading={isSubmitting}
+          customer={customer}
+        />
+      )}
 
       <Modal
         isOpen={showReceiptModal}
