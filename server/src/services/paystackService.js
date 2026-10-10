@@ -82,6 +82,22 @@ async function verifyTransaction(reference) {
 }
 
 /**
+ * Ask Paystack to refund a completed transaction in full. Paystack processes
+ * refunds asynchronously and reports the outcome by webhook.
+ * @param {string} reference - Reference of the original transaction
+ * @returns {object} Paystack refund data
+ */
+async function createRefund(reference) {
+  const result = await paystackRequest('POST', '/refund', { transaction: reference })
+
+  if (!result.status) {
+    throw new AppError(result.message || 'Paystack refused the refund', 502)
+  }
+
+  return result.data
+}
+
+/**
  * Validate Paystack webhook signature.
  * @param {string} body   - Raw request body string
  * @param {string} signature - x-paystack-signature header value
@@ -92,4 +108,4 @@ function validateWebhookSignature(body, signature) {
   return hash === signature
 }
 
-module.exports = { initializeTransaction, verifyTransaction, validateWebhookSignature }
+module.exports = { initializeTransaction, verifyTransaction, createRefund, validateWebhookSignature }

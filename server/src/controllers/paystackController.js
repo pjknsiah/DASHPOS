@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid')
 const { initializeTransaction, verifyTransaction, validateWebhookSignature } = require('../services/paystackService')
 const { ValidationError } = require('../utils/errors')
 const { logger } = require('../middleware/logger')
+const { completePaystackRefund, failPaystackRefund } = require('../services/salesService')
 
 async function initialize(req, res, next) {
   try {
@@ -50,7 +51,6 @@ async function verify(req, res, next) {
 }
 
 async function webhook(req, res) {
-  // Always respond 200 quickly — Paystack retries on non-200
   const signature = req.headers['x-paystack-signature']
   const rawBody = req.rawBody
 
@@ -59,15 +59,38 @@ async function webhook(req, res) {
     return res.sendStatus(400)
   }
 
-  const event = req.body
+  const { event, data = {} } = req.body
 
-  if (event.event === 'charge.success') {
-    logger.info(`Paystack webhook: charge.success for reference ${event.data?.reference}`)
-    // The POS flow verifies synchronously before creating the sale, so
-    // this webhook is primarily for logging / future async use cases.
+  try {
+    if (event === 'charge.success') {
+      // The POS flow verifies synchronously before creating the sale, so
+      // this is only logged
+      logger.info(`Paystack webhook: charge.success for reference ${data.reference}`)
+    } else if (event === 'refund.processed' || event === 'refund.failed') {
+      const reference = refundTransactionReference(data)
+      if (!reference) {
+        logger.warn(`Paystack webhook: ${event} without a transaction reference`)
+      } else if (event === 'refund.processed') {
+        const refunded = await completePaystackRefund(reference)
+        logger.info(`Paystack webhook: refund.processed for ${reference}${refunded ? ', sale refunded' : ', nothing to update'}`)
+      } else {
+        const cleared = await failPaystackRefund(reference)
+        logger.warn(`Paystack webhook: refund.failed for ${reference}${cleared ? ', refund request cleared' : ''}`)
+      }
+    }
+  } catch (err) {
+    // A non-200 makes Paystack retry; handling the same event twice is safe
+    logger.error(`Paystack webhook: failed to handle ${event}: ${err.message}`)
+    return res.sendStatus(500)
   }
 
   res.sendStatus(200)
+}
+
+// Refund events carry the original transaction's reference; accept the
+// documented field and the nested form in case the payload shape differs
+function refundTransactionReference(data) {
+  return data.transaction_reference || data.transaction?.reference || null
 }
 
 module.exports = { initialize, verify, webhook }
