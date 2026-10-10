@@ -9,9 +9,10 @@ const bcrypt = require('bcrypt')
 jest.mock('../services/paystackService', () => ({
   initializeTransaction: jest.fn(),
   verifyTransaction: jest.fn(),
+  createRefund: jest.fn(),
   validateWebhookSignature: jest.fn(),
 }))
-const { verifyTransaction } = require('../services/paystackService')
+const { verifyTransaction, createRefund, validateWebhookSignature } = require('../services/paystackService')
 
 // Real ID generator by default; tests can override it per call
 jest.mock('../utils/generateTransactionId', () =>
@@ -585,5 +586,138 @@ describe('POST /api/sales — discount limits', () => {
 
     expect(res.status).toBe(201)
     expect(parseFloat(res.body.data.total_amount)).toBe(0)
+  })
+})
+
+describe('Paystack refunds (card and mobile money)', () => {
+  let refCounter = 0
+
+  async function cardSale(quantity = 1) {
+    const reference = `CARD-REFUND-TEST-${Date.now()}-${refCounter++}`
+    verifyTransaction.mockResolvedValueOnce({ status: 'success', amount: 1000 * quantity })
+    const res = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        items: [{ product_id: testProduct.id, quantity }],
+        payment_method: 'CARD',
+        amount_paid: 10.0 * quantity,
+        reference,
+      })
+    expect(res.status).toBe(201)
+    return { saleId: res.body.data.id, transactionId: res.body.data.transaction_id, reference }
+  }
+
+  const requestRefund = (saleId) =>
+    request(app).post(`/api/sales/${saleId}/refund`).set('Authorization', `Bearer ${managerToken}`)
+
+  const sendWebhook = (event, data) =>
+    request(app)
+      .post('/api/payments/paystack/webhook')
+      .set('x-paystack-signature', 'test-signature')
+      .send({ event, data })
+
+  const stockOf = async (id) => (await prisma.product.findUnique({ where: { id } })).quantity
+
+  beforeEach(() => {
+    createRefund.mockReset()
+    createRefund.mockResolvedValue({ status: 'pending' })
+    validateWebhookSignature.mockReturnValue(true)
+  })
+
+  it('requests a Paystack refund and leaves the sale completed until it is confirmed', async () => {
+    const { saleId, reference } = await cardSale(2)
+    const stockBefore = await stockOf(testProduct.id)
+
+    const res = await requestRefund(saleId)
+
+    expect(res.status).toBe(202)
+    expect(createRefund).toHaveBeenCalledWith(reference)
+    expect(res.body.data.payment_status).toBe('COMPLETED')
+    expect(res.body.data.refund_requested_at).not.toBeNull()
+    expect(await stockOf(testProduct.id)).toBe(stockBefore)
+  })
+
+  it('rejects a second refund request while one is pending', async () => {
+    const { saleId } = await cardSale()
+    await requestRefund(saleId)
+
+    const res = await requestRefund(saleId)
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.message).toMatch(/already requested/i)
+    expect(createRefund).toHaveBeenCalledTimes(1)
+  })
+
+  it('completes the refund once on refund.processed, even if the webhook is repeated', async () => {
+    const { saleId, transactionId, reference } = await cardSale(2)
+    await requestRefund(saleId)
+    const stockBefore = await stockOf(testProduct.id)
+
+    const first = await sendWebhook('refund.processed', { status: 'processed', transaction_reference: reference })
+    const repeat = await sendWebhook('refund.processed', { status: 'processed', transaction_reference: reference })
+
+    expect(first.status).toBe(200)
+    expect(repeat.status).toBe(200)
+
+    const sale = await prisma.sale.findUnique({ where: { id: saleId } })
+    expect(sale.payment_status).toBe('REFUNDED')
+    expect(sale.refund_requested_at).toBeNull()
+    expect(await stockOf(testProduct.id)).toBe(stockBefore + 2)
+
+    const returnLogs = await prisma.inventoryLog.findMany({
+      where: { change_type: 'RETURN', notes: `Refund for sale ${transactionId}` },
+    })
+    expect(returnLogs).toHaveLength(1)
+    expect(returnLogs[0].user_id).toBe(managerUser.id)
+  })
+
+  it('completes a refund started from the Paystack dashboard', async () => {
+    const { saleId, reference } = await cardSale()
+
+    const res = await sendWebhook('refund.processed', { transaction: { reference } })
+
+    expect(res.status).toBe(200)
+    const sale = await prisma.sale.findUnique({ where: { id: saleId } })
+    expect(sale.payment_status).toBe('REFUNDED')
+  })
+
+  it('clears the request on refund.failed so it can be tried again', async () => {
+    const { saleId, reference } = await cardSale()
+    await requestRefund(saleId)
+
+    const res = await sendWebhook('refund.failed', { status: 'failed', transaction_reference: reference })
+
+    expect(res.status).toBe(200)
+    const sale = await prisma.sale.findUnique({ where: { id: saleId } })
+    expect(sale.payment_status).toBe('COMPLETED')
+    expect(sale.refund_requested_at).toBeNull()
+
+    const retry = await requestRefund(saleId)
+    expect(retry.status).toBe(202)
+  })
+
+  it('returns an error and clears the request when Paystack refuses the refund', async () => {
+    const { saleId } = await cardSale()
+    const { AppError } = require('../utils/errors')
+    createRefund.mockRejectedValueOnce(new AppError('Transaction has been fully reversed', 502))
+
+    const res = await requestRefund(saleId)
+
+    expect(res.status).toBe(502)
+    const sale = await prisma.sale.findUnique({ where: { id: saleId } })
+    expect(sale.refund_requested_at).toBeNull()
+    expect(sale.payment_status).toBe('COMPLETED')
+  })
+
+  it('ignores refund webhooks with an invalid signature', async () => {
+    const { saleId, reference } = await cardSale()
+    validateWebhookSignature.mockReturnValue(false)
+
+    const res = await sendWebhook('refund.processed', { transaction_reference: reference })
+
+    expect(res.status).toBe(400)
+    const sale = await prisma.sale.findUnique({ where: { id: saleId } })
+    expect(sale.payment_status).toBe('COMPLETED')
   })
 })

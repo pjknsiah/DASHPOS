@@ -199,7 +199,21 @@ Get receipt data as JSON for re-printing.
 ```
 
 ### POST /api/sales/:id/refund
-Process a full refund. Restores stock, creates RETURN inventory log. **Roles:** ADMIN, MANAGER
+Process a full refund. **Roles:** ADMIN, MANAGER
+
+- **Cash sales** are refunded immediately (`200`): the sale becomes `REFUNDED`, stock is restored with RETURN inventory logs, and loyalty points are reversed.
+- **Card and mobile money sales** are refunded through Paystack (`202`). The sale stays `COMPLETED` with `refund_requested_at` set until Paystack sends `refund.processed` to the webhook, which then completes the refund as above. A second request while one is pending returns `422`. If Paystack refuses the refund, the request is cleared and `502` is returned.
+
+### POST /api/payments/paystack/webhook
+Receives Paystack events; requests must carry a valid `x-paystack-signature`. No auth token.
+
+| Event | Effect |
+|---|---|
+| `refund.processed` | Completes the refund for the sale paid with `data.transaction_reference`, including refunds started from the Paystack dashboard. Repeated deliveries are ignored. |
+| `refund.failed` | Clears the pending refund so it can be requested again. |
+| `charge.success` | Logged only. |
+
+Register the webhook URL (`https://<your-api-host>/api/payments/paystack/webhook`) in the Paystack dashboard under Settings → API Keys & Webhooks.
 
 ---
 

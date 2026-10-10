@@ -51,6 +51,14 @@ async function getSale(req, res, next) {
 async function processRefund(req, res, next) {
   try {
     const sale = await salesService.processRefund(req.params.id, req.user.id)
+    if (sale.payment_status !== 'REFUNDED') {
+      // Paystack refund requested; it completes when the webhook confirms it
+      return res.status(202).json({
+        success: true,
+        data: normalizeSale(sale),
+        message: 'Refund requested. The sale will be marked refunded when Paystack confirms it.',
+      })
+    }
     res.json({ success: true, data: normalizeSale(sale), message: 'Refund processed successfully' })
   } catch (err) {
     next(err)
