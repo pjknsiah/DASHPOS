@@ -68,7 +68,7 @@ export default function DashboardPage() {
       try {
         const res = await reportsService.salesSummary({ start_date: today, end_date: today })
         setSummary(res.data?.data ?? res.data)
-      } catch (e) {
+      } catch {
         setError('Failed to load summary data.')
       } finally {
         setLoadingSummary(false)
@@ -88,7 +88,7 @@ export default function DashboardPage() {
         setDailySales(dailyRes.data?.data ?? dailyRes.data ?? [])
         setTopProducts(topRes.data?.data ?? topRes.data ?? [])
         setCategories(catRes.data?.data ?? catRes.data ?? [])
-      } catch (e) {
+      } catch {
         // non-fatal
       } finally {
         setLoadingCharts(false)
@@ -102,7 +102,7 @@ export default function DashboardPage() {
       try {
         const res = await reportsService.inventoryStatus()
         setInventoryStatus(res.data?.data ?? res.data)
-      } catch (e) {
+      } catch {
         // non-fatal
       } finally {
         setLoadingInventory(false)

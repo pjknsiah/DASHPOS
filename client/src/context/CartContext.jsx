@@ -1,8 +1,7 @@
-import { createContext, useReducer, useContext } from 'react'
-import { useSettings } from './SettingsContext'
+import { useReducer } from 'react'
+import { CartContext } from './contexts'
+import { useSettings } from '../hooks/useSettings'
 import { cartTotals } from '../utils/money'
-
-export const CartContext = createContext(null)
 
 function cartReducer(state, action) {
   switch (action.type) {
@@ -77,10 +76,4 @@ export function CartProvider({ children }) {
       {children}
     </CartContext.Provider>
   )
-}
-
-export function useCart() {
-  const ctx = useContext(CartContext)
-  if (!ctx) throw new Error('useCart must be used within CartProvider')
-  return ctx
 }

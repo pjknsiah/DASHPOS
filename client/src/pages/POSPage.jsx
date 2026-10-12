@@ -1,6 +1,6 @@
 import { useState, useEffect, useEffectEvent, useRef } from 'react'
 import toast from 'react-hot-toast'
-import { useCart } from '../context/CartContext'
+import { useCart } from '../hooks/useCart'
 import { productsService } from '../services/products'
 import { salesService } from '../services/sales'
 import { customersService } from '../services/customers'
@@ -12,7 +12,7 @@ import { Input } from '../components/Input'
 import { Modal } from '../components/Modal'
 import { Badge } from '../components/Badge'
 import { useAuth } from '../hooks/useAuth'
-import { useSettings } from '../context/SettingsContext'
+import { useSettings } from '../hooks/useSettings'
 
 // ─── Receipt Component (rendered inside a modal, printable) ───────────────────
 function Receipt({ sale, onClose }) {
