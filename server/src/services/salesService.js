@@ -1,5 +1,6 @@
 const prisma = require('../utils/prismaClient')
 const generateTransactionId = require('../utils/generateTransactionId')
+const { toMoney, roundMoney, toPesewas } = require('../utils/money')
 const { NotFoundError, ValidationError, AppError } = require('../utils/errors')
 const { verifyTransaction, createRefund } = require('./paystackService')
 
@@ -27,15 +28,15 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
     }
   }
 
-  // Step 2: Calculate totals
-  const taxRate = await getSettingValue('tax_rate', 0)
-  let subtotal = 0
+  // Step 2: Calculate totals with exact decimal arithmetic
+  const taxRate = toMoney(await getSettingValue('tax_rate', 0))
+  let subtotal = toMoney(0)
   const saleItems = items.map((item) => {
     const product = productMap.get(item.product_id)
-    const unit_price = parseFloat(product.price)
-    const itemDiscount = parseFloat(item.discount || 0)
-    const lineGross = unit_price * item.quantity
-    if (itemDiscount > lineGross) {
+    const unit_price = toMoney(product.price)
+    const itemDiscount = toMoney(item.discount)
+    const lineGross = unit_price.mul(item.quantity)
+    if (itemDiscount.gt(lineGross)) {
       throw new ValidationError('Discount too large', [
         {
           field: 'items',
@@ -43,8 +44,8 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
         },
       ])
     }
-    const lineTotal = lineGross - itemDiscount
-    subtotal += lineTotal
+    const lineTotal = lineGross.minus(itemDiscount)
+    subtotal = subtotal.plus(lineTotal)
     return {
       product_id: item.product_id,
       quantity: item.quantity,
@@ -55,8 +56,8 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
     }
   })
 
-  const discountAmt = parseFloat(discount_amount) || 0
-  if (discountAmt > parseFloat(subtotal.toFixed(2))) {
+  const discountAmt = toMoney(discount_amount)
+  if (discountAmt.gt(subtotal)) {
     throw new ValidationError('Discount too large', [
       {
         field: 'discount_amount',
@@ -64,16 +65,17 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
       },
     ])
   }
-  const taxableAmount = subtotal - discountAmt
-  const taxAmount = parseFloat((taxableAmount * (taxRate / 100)).toFixed(2))
-  const totalAmount = parseFloat((taxableAmount + taxAmount).toFixed(2))
+  const taxableAmount = subtotal.minus(discountAmt)
+  // Tax is rounded once, on the taxable amount, half away from zero
+  const taxAmount = roundMoney(taxableAmount.mul(taxRate).div(100))
+  const totalAmount = taxableAmount.plus(taxAmount)
 
   // Validate payment
-  const amountPaid = parseFloat(amount_paid)
+  const amountPaid = toMoney(amount_paid)
   if (payment_method === 'CASH') {
-    if (amountPaid < totalAmount) {
+    if (amountPaid.lt(totalAmount)) {
       throw new ValidationError('Insufficient payment', [
-        { field: 'amount_paid', message: `Amount paid (${amountPaid}) is less than total (${totalAmount})` },
+        { field: 'amount_paid', message: `Amount paid (${amountPaid.toFixed(2)}) is less than total (${totalAmount.toFixed(2)})` },
       ])
     }
   } else {
@@ -100,23 +102,23 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
       ])
     }
 
-    // Amount tolerance: allow up to 1 pesewa rounding difference
-    const paidInGHS = paystackData.amount / 100
-    if (Math.abs(paidInGHS - totalAmount) > 0.01) {
+    // Paystack reports whole pesewas, so the amounts must match exactly
+    if (paystackData.amount !== toPesewas(totalAmount)) {
+      const paid = toMoney(paystackData.amount).div(100)
       throw new ValidationError('Payment amount mismatch', [
-        { field: 'amount_paid', message: `Paystack amount (GH₵ ${paidInGHS.toFixed(2)}) does not match sale total (GH₵ ${totalAmount.toFixed(2)})` },
+        { field: 'amount_paid', message: `Paystack amount (GH₵ ${paid.toFixed(2)}) does not match sale total (GH₵ ${totalAmount.toFixed(2)})` },
       ])
     }
   }
 
-  const changeGiven = payment_method === 'CASH' ? parseFloat((amountPaid - totalAmount).toFixed(2)) : 0
+  const changeGiven = payment_method === 'CASH' ? amountPaid.minus(totalAmount) : toMoney(0)
 
   // Loyalty points (1 point per GHS 10 by default). Stored on the sale so a
   // refund reverses exactly what was earned, even if the rate changes later.
   let pointsEarned = 0
   if (customer_id) {
-    const loyaltyRate = await getSettingValue('loyalty_points_rate', 10)
-    pointsEarned = Math.floor(totalAmount / loyaltyRate)
+    const loyaltyRate = toMoney(await getSettingValue('loyalty_points_rate', 10))
+    if (loyaltyRate.gt(0)) pointsEarned = totalAmount.div(loyaltyRate).floor().toNumber()
   }
 
   // Step 3–6: Execute in a single DB transaction, retried with a fresh
@@ -128,7 +130,7 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
         transaction_id,
         user_id: userId,
         customer_id: customer_id || null,
-        subtotal: parseFloat(subtotal.toFixed(2)),
+        subtotal,
         discount_amount: discountAmt,
         tax_amount: taxAmount,
         total_amount: totalAmount,

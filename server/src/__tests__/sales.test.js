@@ -782,3 +782,59 @@ describe('Loyalty points on refund', () => {
     expect(res.body.data.loyalty_points_earned).toBe(0)
   })
 })
+
+describe('Exact money arithmetic', () => {
+  let originalTax
+  let thirtyPesewaProduct
+
+  beforeAll(async () => {
+    originalTax = await prisma.settings.findUnique({ where: { key: 'tax_rate' } })
+    thirtyPesewaProduct = await prisma.product.create({
+      data: { name: 'Sales Test Sweet', sku: 'SALES-TEST-SWEET', category_id: testCategory.id, price: 0.3, quantity: 100 },
+    })
+  })
+
+  afterAll(async () => {
+    if (originalTax) {
+      await prisma.settings.update({ where: { key: 'tax_rate' }, data: { value: originalTax.value } })
+    } else {
+      await prisma.settings.deleteMany({ where: { key: 'tax_rate' } })
+    }
+  })
+
+  const setTax = (value) =>
+    prisma.settings.upsert({ where: { key: 'tax_rate' }, update: { value }, create: { key: 'tax_rate', value } })
+
+  it('rounds tax exactly: 5% of GH₵ 0.30 is 0.015, which rounds up to 0.02', async () => {
+    await setTax('5')
+
+    const res = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ items: [{ product_id: thirtyPesewaProduct.id, quantity: 1 }], payment_method: 'CASH', amount_paid: 1 })
+
+    expect(res.status).toBe(201)
+    expect(parseFloat(res.body.data.tax_amount)).toBe(0.02) // floats gave 0.01
+    expect(parseFloat(res.body.data.total_amount)).toBe(0.32)
+    expect(parseFloat(res.body.data.payment.change_given)).toBe(0.68)
+  })
+
+  it('rejects a Paystack payment one pesewa short of the total', async () => {
+    await setTax('0')
+    verifyTransaction.mockResolvedValueOnce({ status: 'success', amount: 999 })
+
+    // GH₵ 10.00 sale paid with GH₵ 9.99; the old 0.01 tolerance accepted this
+    const res = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        items: [{ product_id: testProduct.id, quantity: 1 }],
+        payment_method: 'MOBILE_MONEY',
+        amount_paid: 10,
+        reference: `MONEY-EXACT-${Date.now()}`,
+      })
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.message).toMatch(/amount mismatch/i)
+  })
+})

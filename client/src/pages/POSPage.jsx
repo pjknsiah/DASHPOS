@@ -6,6 +6,7 @@ import { salesService } from '../services/sales'
 import { customersService } from '../services/customers'
 import { paymentsService } from '../services/payments'
 import { formatCurrency } from '../utils/formatCurrency'
+import { toPesewas, fromPesewas, lineTotalPesewas } from '../utils/money'
 import { Button } from '../components/Button'
 import { Input } from '../components/Input'
 import { Modal } from '../components/Modal'
@@ -168,11 +169,12 @@ function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading, customer }
   const [errors, setErrors] = useState({})
   const [paystackLoading, setPaystackLoading] = useState(false)
 
-  const change = method === 'CASH' ? parseFloat(amountPaid || 0) - total : 0
+  const paidEnough = amountPaid !== '' && toPesewas(amountPaid) >= toPesewas(total)
+  const change = method === 'CASH' ? fromPesewas(toPesewas(amountPaid) - toPesewas(total)) : 0
 
   function validateCash() {
     const errs = {}
-    if (!amountPaid || parseFloat(amountPaid) < total) {
+    if (!paidEnough) {
       errs.amountPaid = `Amount must be at least ${formatCurrency(total)}`
     }
     setErrors(errs)
@@ -216,7 +218,7 @@ function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading, customer }
       const handler = PaystackPop.setup({
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
         email: email.trim(),
-        amount: Math.round(total * 100), // pesewas
+        amount: toPesewas(total),
         currency: 'GHS',
         ref: reference,
         access_code,
@@ -292,7 +294,7 @@ function PaymentModal({ isOpen, onClose, total, onConfirm, isLoading, customer }
               placeholder={formatCurrency(total).replace('GH₵ ', '')}
               error={errors.amountPaid}
             />
-            {parseFloat(amountPaid) >= total && (
+            {paidEnough && (
               <div className="flex justify-between items-center bg-success-50 border border-success-100 rounded-lg px-3 py-2">
                 <span className="text-sm text-success-700">Change</span>
                 <span className="font-bold text-success-700">{formatCurrency(change)}</span>
@@ -404,6 +406,8 @@ function CustomerModal({ isOpen, onClose, onSelect }) {
 
 // ─── Cart Item Row ─────────────────────────────────────────────────────────────
 function CartItem({ item, onUpdate, onRemove, onDiscountChange }) {
+  const lineGross = fromPesewas(toPesewas(item.price) * item.quantity)
+
   return (
     <div className="py-2.5 border-b border-gray-100 last:border-0">
       <div className="flex items-start justify-between gap-2">
@@ -454,17 +458,17 @@ function CartItem({ item, onUpdate, onRemove, onDiscountChange }) {
           <input
             type="number"
             min={0}
-            max={item.price * item.quantity}
+            max={lineGross}
             step="0.01"
             value={item.discount || 0}
-            onChange={(e) => onDiscountChange(item.product_id, Math.min(parseFloat(e.target.value) || 0, item.price * item.quantity))}
+            onChange={(e) => onDiscountChange(item.product_id, Math.min(parseFloat(e.target.value) || 0, lineGross))}
             className="w-16 text-right text-xs border border-gray-200 rounded py-0.5 px-1 focus:outline-none focus:ring-1 focus:ring-primary-400"
           />
         </div>
 
         {/* Line total */}
         <p className="text-sm font-semibold text-gray-900 min-w-[70px] text-right">
-          {formatCurrency(item.price * item.quantity - (item.discount || 0))}
+          {formatCurrency(fromPesewas(lineTotalPesewas(item)))}
         </p>
       </div>
     </div>
@@ -474,7 +478,7 @@ function CartItem({ item, onUpdate, onRemove, onDiscountChange }) {
 // ─── Main POSPage ──────────────────────────────────────────────────────────────
 export default function POSPage() {
   const { user } = useAuth()
-  const { items, cartDiscount, customer, subtotal, total, addItem, removeItem, updateQuantity, updateDiscount, setCartDiscount, setCustomer, clearCart } = useCart()
+  const { items, cartDiscount, customer, subtotal, tax, total, addItem, removeItem, updateQuantity, updateDiscount, setCartDiscount, setCustomer, clearCart } = useCart()
 
   const [searchQuery, setSearchQuery] = useState('')
   const [allProducts, setAllProducts] = useState([])
@@ -849,6 +853,12 @@ export default function POSPage() {
             <div className="flex justify-between text-sm text-danger-600">
               <span>Discount</span>
               <span>-{formatCurrency(cartDiscount)}</span>
+            </div>
+          )}
+          {tax > 0 && (
+            <div className="flex justify-between text-sm text-gray-500">
+              <span>Tax</span>
+              <span>{formatCurrency(tax)}</span>
             </div>
           )}
 

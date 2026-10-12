@@ -1,5 +1,6 @@
 const https = require('https')
 const { AppError } = require('../utils/errors')
+const { toPesewas } = require('../utils/money')
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY
 
@@ -51,7 +52,7 @@ async function initializeTransaction({ email, amount, reference, metadata = {} }
   const body = {
     email,
     // Paystack expects amount in the smallest currency unit (pesewas for GHS)
-    amount: Math.round(amount * 100),
+    amount: toPesewas(amount),
     reference,
     currency: 'GHS',
     metadata,
