@@ -85,6 +85,9 @@ All primary keys are UUIDs. Every table has `created_at` and `updated_at` timest
 | `total_amount` | Decimal(10,2) | Final charged amount |
 | `payment_method` | PaymentMethod | |
 | `payment_status` | PaymentStatus | Default: COMPLETED |
+| `loyalty_points_earned` | Int | Default: 0. Points awarded by this sale; a refund reverses exactly this many |
+| `refund_requested_at` | DateTime? | Set while a Paystack refund awaits webhook confirmation |
+| `refund_requested_by` | String? | User who requested the pending Paystack refund |
 | `notes` | String? | |
 
 Indexes: `transaction_id`, `created_at`
@@ -158,5 +161,5 @@ Indexes: `transaction_id`, `created_at`
 - **Soft deletes on Products** — `is_active = false` instead of hard delete, preserving sale history integrity (`ON DELETE RESTRICT` on `SaleItem.product_id`).
 - **Historical unit_price** — `SaleItem.unit_price` stores the price at the time of sale, not a FK to the current product price, so reports remain accurate after price changes.
 - **Atomic sale transactions** — Creating a sale, its items, the payment record, and stock deductions all happen in a single Prisma `$transaction`. If any step fails, everything rolls back.
-- **Loyalty points** — Awarded automatically inside the sale transaction at `1 point per GHS {loyalty_points_rate}` spent.
+- **Loyalty points** — Awarded automatically inside the sale transaction at `1 point per GHS {loyalty_points_rate}` spent. The points are stored on the sale (`loyalty_points_earned`), so a refund reverses exactly what was earned even if the rate has changed since.
 - **Account lockout** — `failed_login_attempts` is incremented on every failed login. When it reaches 5, `locked_until` is set to 30 minutes in the future. Only an Admin can reset it.
