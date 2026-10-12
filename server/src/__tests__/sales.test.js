@@ -721,3 +721,64 @@ describe('Paystack refunds (card and mobile money)', () => {
     expect(sale.payment_status).toBe('COMPLETED')
   })
 })
+
+describe('Loyalty points on refund', () => {
+  let originalRate
+
+  beforeAll(async () => {
+    originalRate = await prisma.settings.findUnique({ where: { key: 'loyalty_points_rate' } })
+  })
+
+  afterAll(async () => {
+    if (originalRate) {
+      await prisma.settings.update({ where: { key: 'loyalty_points_rate' }, data: { value: originalRate.value } })
+    } else {
+      await prisma.settings.deleteMany({ where: { key: 'loyalty_points_rate' } })
+    }
+  })
+
+  const setRate = (value) =>
+    prisma.settings.upsert({
+      where: { key: 'loyalty_points_rate' },
+      update: { value },
+      create: { key: 'loyalty_points_rate', value },
+    })
+
+  const pointsOf = async () => (await prisma.customer.findUnique({ where: { id: testCustomer.id } })).loyalty_points
+
+  it('reverses exactly the points the sale earned after the rate changes', async () => {
+    await setRate('10')
+    const saleRes = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        items: [{ product_id: testProduct.id, quantity: 10 }],
+        payment_method: 'CASH',
+        amount_paid: 100.0,
+        customer_id: testCustomer.id,
+      })
+    expect(saleRes.status).toBe(201)
+    expect(saleRes.body.data.loyalty_points_earned).toBe(10)
+
+    // Admin halves the rate: the same sale would now earn 20 points
+    await setRate('5')
+    const pointsBefore = await pointsOf()
+
+    const refund = await request(app)
+      .post(`/api/sales/${saleRes.body.data.id}/refund`)
+      .set('Authorization', `Bearer ${managerToken}`)
+
+    expect(refund.status).toBe(200)
+    expect(await pointsOf()).toBe(pointsBefore - 10)
+  })
+
+  it('records zero points for a sale without a customer', async () => {
+    const res = await request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ items: [{ product_id: testProduct.id, quantity: 2 }], payment_method: 'CASH', amount_paid: 20.0 })
+
+    expect(res.status).toBe(201)
+    expect(res.body.data.loyalty_points_earned).toBe(0)
+  })
+})

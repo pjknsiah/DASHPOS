@@ -111,6 +111,14 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
 
   const changeGiven = payment_method === 'CASH' ? parseFloat((amountPaid - totalAmount).toFixed(2)) : 0
 
+  // Loyalty points (1 point per GHS 10 by default). Stored on the sale so a
+  // refund reverses exactly what was earned, even if the rate changes later.
+  let pointsEarned = 0
+  if (customer_id) {
+    const loyaltyRate = await getSettingValue('loyalty_points_rate', 10)
+    pointsEarned = Math.floor(totalAmount / loyaltyRate)
+  }
+
   // Step 3–6: Execute in a single DB transaction, retried with a fresh
   // transaction ID if a concurrent sale claimed the same one
   const sale = await withUniqueTransactionId((transaction_id) => prisma.$transaction(async (tx) => {
@@ -126,6 +134,7 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
         total_amount: totalAmount,
         payment_method,
         payment_status: 'COMPLETED',
+        loyalty_points_earned: pointsEarned,
         notes: notes || null,
       },
     })
@@ -188,16 +197,12 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
       })
     }
 
-    // Award loyalty points if customer is linked (1 point per GHS 10)
-    if (customer_id) {
-      const loyaltyRate = await getSettingValue('loyalty_points_rate', 10)
-      const pointsEarned = Math.floor(totalAmount / loyaltyRate)
-      if (pointsEarned > 0) {
-        await tx.customer.update({
-          where: { id: customer_id },
-          data: { loyalty_points: { increment: pointsEarned } },
-        })
-      }
+    // Award loyalty points if customer is linked
+    if (pointsEarned > 0) {
+      await tx.customer.update({
+        where: { id: customer_id },
+        data: { loyalty_points: { increment: pointsEarned } },
+      })
     }
 
     return newSale
@@ -399,10 +404,9 @@ async function completeRefund(tx, sale, userId) {
     })
   }
 
-  // Reverse loyalty points
+  // Reverse exactly the loyalty points this sale earned
   if (sale.customer_id) {
-    const loyaltyRate = await getSettingValue('loyalty_points_rate', 10)
-    const pointsToDeduct = Math.floor(parseFloat(sale.total_amount) / loyaltyRate)
+    const pointsToDeduct = sale.loyalty_points_earned
     if (pointsToDeduct > 0) {
       // Deduct atomically, flooring at zero if the customer has already spent the points
       const { count: deducted } = await tx.customer.updateMany({
