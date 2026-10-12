@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid')
 const { initializeTransaction, verifyTransaction, validateWebhookSignature } = require('../services/paystackService')
 const { ValidationError } = require('../utils/errors')
 const { logger } = require('../middleware/logger')
+const { toMoney } = require('../utils/money')
 const { completePaystackRefund, failPaystackRefund } = require('../services/salesService')
 
 async function initialize(req, res, next) {
@@ -11,7 +12,7 @@ async function initialize(req, res, next) {
     // Generate a unique reference for this payment attempt
     const reference = `POS-${Date.now()}-${uuidv4().slice(0, 8).toUpperCase()}`
 
-    const data = await initializeTransaction({ email, amount: parseFloat(amount), reference, metadata })
+    const data = await initializeTransaction({ email, amount, reference, metadata })
 
     res.status(200).json({
       success: true,
@@ -38,7 +39,7 @@ async function verify(req, res, next) {
       success: true,
       data: {
         status: data.status,           // 'success' | 'failed' | 'abandoned'
-        amount: data.amount / 100,     // convert pesewas back to GHS
+        amount: toMoney(data.amount).div(100).toNumber(), // pesewas back to GHS
         reference: data.reference,
         channel: data.channel,         // 'card' | 'mobile_money' etc.
         paid_at: data.paid_at,

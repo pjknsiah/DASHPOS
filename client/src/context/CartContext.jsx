@@ -1,4 +1,6 @@
 import { createContext, useReducer, useContext } from 'react'
+import { useSettings } from './SettingsContext'
+import { cartTotals } from '../utils/money'
 
 export const CartContext = createContext(null)
 
@@ -56,13 +58,9 @@ const initialState = {
 export function CartProvider({ children }) {
   const [state, dispatch] = useReducer(cartReducer, initialState)
 
-  const subtotal = state.items.reduce((sum, item) => {
-    const lineTotal = item.price * item.quantity
-    const lineDiscount = item.discount || 0
-    return sum + lineTotal - lineDiscount
-  }, 0)
-
-  const total = Math.max(0, subtotal - (state.cartDiscount || 0))
+  const settings = useSettings()
+  // Exact totals, including tax, matching what the server will charge
+  const { subtotal, tax, total } = cartTotals(state.items, state.cartDiscount, settings.tax_rate)
 
   function addItem(product) {
     dispatch({ type: 'ADD_ITEM', payload: { product_id: product.id, name: product.name, price: product.price, sku: product.sku, quantity_available: product.quantity } })
@@ -75,7 +73,7 @@ export function CartProvider({ children }) {
   function clearCart() { dispatch({ type: 'CLEAR_CART' }) }
 
   return (
-    <CartContext.Provider value={{ ...state, subtotal, total, addItem, removeItem, updateQuantity, updateDiscount, setCartDiscount, setCustomer, clearCart }}>
+    <CartContext.Provider value={{ ...state, subtotal, tax, total, addItem, removeItem, updateQuantity, updateDiscount, setCartDiscount, setCustomer, clearCart }}>
       {children}
     </CartContext.Provider>
   )
