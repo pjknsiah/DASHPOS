@@ -173,7 +173,8 @@ describe('Account lockout', () => {
     await prisma.user.delete({ where: { id: lockTestUser.id } })
   })
 
-  it('locks account after 5 failed attempts', async () => {
+  it('locks account for 30 minutes after 5 failed attempts', async () => {
+    const before = Date.now()
     for (let i = 0; i < 5; i++) {
       await request(app)
         .post('/api/auth/login')
@@ -181,8 +182,9 @@ describe('Account lockout', () => {
     }
 
     const locked = await prisma.user.findUnique({ where: { id: lockTestUser.id } })
-    expect(locked.locked_until).not.toBeNull()
-    expect(locked.locked_until > new Date()).toBe(true)
+    const lockMs = locked.locked_until.getTime() - before
+    expect(lockMs).toBeGreaterThanOrEqual(30 * 60 * 1000)
+    expect(lockMs).toBeLessThan(31 * 60 * 1000)
   })
 
   it('rejects login with correct password when account is locked', async () => {
@@ -191,6 +193,28 @@ describe('Account lockout', () => {
       .send({ username: 'locktest_user_xyz', password: 'correctpass' })
 
     expect(res.status).toBe(401)
-    expect(res.body.error.message).toMatch(/locked/i)
+    expect(res.body.error.message).toMatch(/locked\. try again in 30 minutes/i)
+  })
+
+  it('starts counting again after a lock expires, so one typo does not relock', async () => {
+    await prisma.user.update({
+      where: { id: lockTestUser.id },
+      data: { failed_login_attempts: 5, locked_until: new Date(Date.now() - 1000) },
+    })
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'locktest_user_xyz', password: 'wrongpassword' })
+
+    expect(res.status).toBe(401)
+    expect(res.body.error.message).toMatch(/invalid credentials/i)
+    const user = await prisma.user.findUnique({ where: { id: lockTestUser.id } })
+    expect(user.failed_login_attempts).toBe(1)
+    expect(user.locked_until).toBeNull()
+
+    const ok = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'locktest_user_xyz', password: 'correctpass' })
+    expect(ok.status).toBe(200)
   })
 })

@@ -3,6 +3,10 @@ const jwt = require('jsonwebtoken')
 const prisma = require('../utils/prismaClient')
 const { UnauthorizedError, NotFoundError } = require('../utils/errors')
 
+// After this many failed logins in a row, the account is locked
+const MAX_FAILED_LOGINS = 5
+const LOCKOUT_MINUTES = 30
+
 async function logAuthEvent(userId, eventType, ipAddress, userAgent, details) {
   await prisma.authLog.create({
     data: {
@@ -40,19 +44,25 @@ async function login(username, password, ipAddress, userAgent) {
   }
 
   // Check account lock
-  if (user.locked_until && user.locked_until > new Date()) {
+  const now = new Date()
+  if (user.locked_until && user.locked_until > now) {
     await logAuthEvent(user.id, 'LOGIN_BLOCKED', ipAddress, userAgent, 'Account locked')
-    throw new UnauthorizedError('Account locked. Please contact an administrator.')
+    const minutesLeft = Math.ceil((user.locked_until - now) / 60000)
+    throw new UnauthorizedError(
+      `Account locked. Try again in ${minutesLeft} minute${minutesLeft === 1 ? '' : 's'} or contact an administrator.`
+    )
   }
 
   const passwordValid = await bcrypt.compare(password, user.password_hash)
 
   if (!passwordValid) {
-    const newFailCount = user.failed_login_attempts + 1
-    const updateData = { failed_login_attempts: newFailCount }
+    // Once a lock has expired, start counting failed attempts again
+    const previousFails = user.locked_until ? 0 : user.failed_login_attempts
+    const newFailCount = previousFails + 1
+    const updateData = { failed_login_attempts: newFailCount, locked_until: null }
 
-    if (newFailCount >= 5) {
-      updateData.locked_until = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    if (newFailCount >= MAX_FAILED_LOGINS) {
+      updateData.locked_until = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000)
       await prisma.user.update({ where: { id: user.id }, data: updateData })
       await logAuthEvent(user.id, 'ACCOUNT_LOCKED', ipAddress, userAgent, `Locked after ${newFailCount} failed attempts`)
     } else {
