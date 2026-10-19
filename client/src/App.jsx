@@ -7,6 +7,7 @@ import ProductFormPage from './pages/ProductFormPage'
 import InventoryPage from './pages/InventoryPage'
 import CustomersPage from './pages/CustomersPage'
 import CustomerDetailPage from './pages/CustomerDetailPage'
+import SalesPage from './pages/SalesPage'
 import DashboardPage from './pages/DashboardPage'
 import ReportsPage from './pages/ReportsPage'
 import UsersPage from './pages/UsersPage'
@@ -116,6 +117,14 @@ export default function App() {
         element={
           <ProtectedRoute roles={['MANAGER', 'ADMIN']}>
             <CustomerDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/sales"
+        element={
+          <ProtectedRoute roles={['MANAGER', 'ADMIN']}>
+            <SalesPage />
           </ProtectedRoute>
         }
       />
