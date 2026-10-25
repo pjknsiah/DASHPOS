@@ -64,6 +64,25 @@ A full-featured, web-based Point of Sale system for retail businesses, built as 
 
 ---
 
+## Run with Docker
+
+The quickest way to run everything locally. Needs Docker with Compose v2.24 or newer; no local Node.js or PostgreSQL is required.
+
+```bash
+docker compose up --build
+
+# First run only, in another terminal: sample data and the logins below
+docker compose exec api npx prisma db seed
+```
+
+- App: http://localhost:5173
+- API: http://localhost:3001
+- PostgreSQL: `localhost:5433` (user `pos`, password `pos`, database `pos_db`)
+
+Code changes in `server/` and `client/` reload automatically. The database lives in the `db-data` volume and survives restarts; `docker compose down -v` deletes it. For Paystack, put your keys in `server/.env` (`PAYSTACK_SECRET_KEY`) and `client/.env` (`VITE_PAYSTACK_PUBLIC_KEY`); the API's database and JWT settings come from `docker-compose.yml`.
+
+---
+
 ## Setup Instructions
 
 ### 1. Clone the repository

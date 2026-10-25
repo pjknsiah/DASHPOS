@@ -1,5 +1,10 @@
+import process from 'node:process'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+// Where the dev server forwards API calls and uploaded images.
+// Docker Compose sets this to the api service (http://api:3001).
+const apiTarget = process.env.API_PROXY_TARGET || 'http://localhost:3001'
 
 export default defineConfig({
   plugins: [react()],
@@ -7,7 +12,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: apiTarget,
+        changeOrigin: true,
+      },
+      // Product images are stored as /uploads/products/<file> and served by the API
+      '/uploads': {
+        target: apiTarget,
         changeOrigin: true,
       },
     },
