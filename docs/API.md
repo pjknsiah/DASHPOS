@@ -211,9 +211,17 @@ Receives Paystack events; requests must carry a valid `x-paystack-signature`. No
 |---|---|
 | `refund.processed` | Completes the refund for the sale paid with `data.transaction_reference`, including refunds started from the Paystack dashboard. Repeated deliveries are ignored. |
 | `refund.failed` | Clears the pending refund so it can be requested again. |
-| `charge.success` | Logged only. |
+| `charge.success` | Records the charge (references starting `POS-` only) and links it to its sale. A charge with no sale is listed as unmatched (below). |
 
 Register the webhook URL (`https://<your-api-host>/api/payments/paystack/webhook`) in the Paystack dashboard under Settings → API Keys & Webhooks.
+
+### GET /api/payments/paystack/unmatched
+Paystack charges that succeeded but never became a sale (for example, the browser closed after the customer paid), newest first. Excludes refunded ones. **Roles:** ADMIN, MANAGER
+
+Each item: `id`, `reference`, `amount` (pesewas), `currency`, `channel`, `customer_email`, `paid_at`, `refund_requested_at`.
+
+### POST /api/payments/paystack/unmatched/:id/refund
+Refund an unmatched charge in full through Paystack (`202`). It stays listed with `refund_requested_at` set until `refund.processed` arrives; `refund.failed` clears the request so it can be retried. Returns `422` if a refund is already requested or the charge belongs to a sale (refund the sale instead). **Roles:** ADMIN, MANAGER
 
 ---
 
