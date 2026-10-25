@@ -109,6 +109,7 @@ createdb pos_db
 npx prisma migrate deploy
 
 # Seed with sample data (50+ products, 10 customers, 20 sample sales)
+# Warning: deletes all existing data first; refuses to run with NODE_ENV=production
 npx prisma db seed
 ```
 

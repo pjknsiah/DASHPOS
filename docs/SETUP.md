@@ -121,6 +121,8 @@ When you change `prisma/schema.prisma`, create a migration with `npx prisma migr
 npx prisma db seed
 ```
 
+> **Warning:** seeding first **deletes all existing data** (users, products, customers, sales, settings) and then inserts sample data with well-known passwords. Only seed a fresh development database. The script refuses to run when `NODE_ENV=production`; to override that deliberately, set `ALLOW_DESTRUCTIVE_SEED=true`.
+
 This populates the database with:
 - 3 users (one per role)
 - 6 categories

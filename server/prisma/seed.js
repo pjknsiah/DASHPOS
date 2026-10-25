@@ -1,12 +1,21 @@
 const { PrismaClient } = require('@prisma/client')
 const bcrypt = require('bcrypt')
+const { checkSeedAllowed, describeDatabase } = require('./seedGuard')
 
 const prisma = new PrismaClient()
 
 const BCRYPT_COST = 12
 
 async function main() {
-  console.log('Seeding database...')
+  const { allowed, reason } = checkSeedAllowed(process.env)
+  if (!allowed) {
+    console.error(reason)
+    process.exitCode = 1
+    return
+  }
+
+  console.log(`Seeding ${describeDatabase(process.env.DATABASE_URL)}`)
+  console.log('This deletes ALL existing data (users, products, customers, sales, settings) and inserts sample data.')
 
   // Clean up existing data (in reverse FK order)
   await prisma.authLog.deleteMany()
