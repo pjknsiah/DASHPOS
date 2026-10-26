@@ -8,7 +8,7 @@ This guide covers everything needed to get the POS system running from scratch o
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Node.js | 20+ | [nodejs.org](https://nodejs.org) |
+| Node.js | 22.12+ | [nodejs.org](https://nodejs.org) |
 | npm | 10+ | Bundled with Node.js |
 | PostgreSQL | 15+ | [postgresql.org](https://www.postgresql.org) |
 | Git | Any | For cloning the repository |
@@ -337,7 +337,7 @@ pos-system/
 │   ├── tailwind.config.js
 │   └── package.json
 │
-├── server/                    # Node.js 20 + Express backend
+├── server/                    # Node.js 22 + Express backend
 │   ├── src/
 │   │   ├── routes/            # auth, products, inventory, sales, customers, reports, users, settings
 │   │   ├── controllers/       # One controller file per module

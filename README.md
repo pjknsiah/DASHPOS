@@ -48,7 +48,7 @@ A full-featured, web-based Point of Sale system for retail businesses, built as 
 |---|---|
 | Frontend | React 18 + Vite + Tailwind CSS |
 | State Management | React Context + useReducer |
-| Backend | Node.js 20 + Express |
+| Backend | Node.js 22 + Express |
 | ORM | Prisma 5 |
 | Database | PostgreSQL 15+ |
 | Auth | JWT (access + refresh tokens) |
@@ -58,7 +58,7 @@ A full-featured, web-based Point of Sale system for retail businesses, built as 
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22.12+ (the frontend test runner, Vitest 5, needs it)
 - PostgreSQL 15+
 - npm 10+
 
@@ -189,6 +189,8 @@ npm run db:backup
 ---
 
 ## Running Tests
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the server tests against a fresh PostgreSQL database, and client lint, tests and build, on every pull request and every push to `main`.
 
 ```bash
 # Backend tests (requires a running PostgreSQL database configured in .env)
