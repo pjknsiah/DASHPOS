@@ -1,3 +1,4 @@
+const crypto = require('crypto')
 const https = require('https')
 const { AppError } = require('../utils/errors')
 const { toPesewas } = require('../utils/money')
@@ -99,14 +100,21 @@ async function createRefund(reference) {
 }
 
 /**
- * Validate Paystack webhook signature.
+ * Validate Paystack webhook signature: an HMAC-SHA512 of the raw body,
+ * keyed with the secret key, as hex. Compared in constant time so response
+ * timing can't reveal how much of a forged signature was right.
  * @param {string} body   - Raw request body string
  * @param {string} signature - x-paystack-signature header value
+ * @returns {boolean}
  */
 function validateWebhookSignature(body, signature) {
-  const crypto = require('crypto')
-  const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(body).digest('hex')
-  return hash === signature
+  if (!PAYSTACK_SECRET || typeof body !== 'string' || typeof signature !== 'string') return false
+
+  const expected = Buffer.from(crypto.createHmac('sha512', PAYSTACK_SECRET).update(body).digest('hex'))
+  const received = Buffer.from(signature)
+  // timingSafeEqual throws on different lengths; a wrong length is simply invalid
+  if (received.length !== expected.length) return false
+  return crypto.timingSafeEqual(received, expected)
 }
 
 module.exports = { initializeTransaction, verifyTransaction, createRefund, validateWebhookSignature }
