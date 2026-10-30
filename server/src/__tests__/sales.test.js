@@ -838,3 +838,146 @@ describe('Exact money arithmetic', () => {
     expect(res.body.error.message).toMatch(/amount mismatch/i)
   })
 })
+
+describe('Unmatched Paystack payments', () => {
+  let n = 0
+  const ref = () => `POS-TEST-${Date.now()}-${n++}`
+
+  const charge = (reference, amount = 1000) =>
+    request(app)
+      .post('/api/payments/paystack/webhook')
+      .set('x-paystack-signature', 'test-signature')
+      .send({
+        event: 'charge.success',
+        data: { reference, amount, currency: 'GHS', channel: 'mobile_money', paid_at: '2026-10-25T12:00:00Z', customer: { email: 'buyer@test.com' } },
+      })
+
+  const refundEvent = (event, reference) =>
+    request(app)
+      .post('/api/payments/paystack/webhook')
+      .set('x-paystack-signature', 'test-signature')
+      .send({ event, data: { transaction_reference: reference } })
+
+  const cardSale = (reference) =>
+    request(app)
+      .post('/api/sales')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ items: [{ product_id: testProduct.id, quantity: 1 }], payment_method: 'CARD', amount_paid: 10, reference })
+
+  const unmatched = () =>
+    request(app).get('/api/payments/paystack/unmatched').set('Authorization', `Bearer ${managerToken}`)
+
+  const refundUnmatched = (id) =>
+    request(app).post(`/api/payments/paystack/unmatched/${id}/refund`).set('Authorization', `Bearer ${managerToken}`)
+
+  const references = (res) => res.body.data.map((p) => p.reference)
+
+  beforeEach(() => {
+    validateWebhookSignature.mockReturnValue(true)
+    createRefund.mockReset()
+    createRefund.mockResolvedValue({ status: 'pending' })
+  })
+
+  afterAll(async () => {
+    await prisma.paystackPayment.deleteMany({ where: { reference: { startsWith: 'POS-TEST-' } } })
+  })
+
+  it('lists a paid charge with no sale as unmatched (managers only)', async () => {
+    const reference = ref()
+    expect((await charge(reference)).status).toBe(200)
+
+    const res = await unmatched()
+    expect(res.status).toBe(200)
+    const record = res.body.data.find((p) => p.reference === reference)
+    expect(record).toMatchObject({ amount: 1000, channel: 'mobile_money', customer_email: 'buyer@test.com', sale_id: null })
+
+    const asCashier = await request(app).get('/api/payments/paystack/unmatched').set('Authorization', `Bearer ${cashierToken}`)
+    expect(asCashier.status).toBe(403)
+  })
+
+  it('records a repeated webhook only once', async () => {
+    const reference = ref()
+    await charge(reference)
+    await charge(reference)
+
+    expect(await prisma.paystackPayment.count({ where: { reference } })).toBe(1)
+  })
+
+  it('ignores charges that were not started by DASHPOS', async () => {
+    const reference = `OTHER-${Date.now()}`
+    expect((await charge(reference)).status).toBe(200)
+    expect(await prisma.paystackPayment.count({ where: { reference } })).toBe(0)
+  })
+
+  it('links the charge when the sale is created after the webhook', async () => {
+    const reference = ref()
+    await charge(reference)
+    expect((await cardSale(reference)).status).toBe(201)
+
+    const record = await prisma.paystackPayment.findUnique({ where: { reference } })
+    expect(record.sale_id).not.toBeNull()
+    expect(references(await unmatched())).not.toContain(reference)
+  })
+
+  it('links the charge when the webhook arrives after the sale', async () => {
+    const reference = ref()
+    const sale = await cardSale(reference)
+    await charge(reference)
+
+    const record = await prisma.paystackPayment.findUnique({ where: { reference } })
+    expect(record.sale_id).toBe(sale.body.data.id)
+  })
+
+  it('does not show a charge as unmatched if its sale was created at the same moment', async () => {
+    const reference = ref()
+    const sale = await cardSale(reference)
+    // Simulate the race: the webhook recorded the charge before the sale's link step could see it
+    await prisma.paystackPayment.create({ data: { reference, amount: 1000, currency: 'GHS' } })
+
+    expect(references(await unmatched())).not.toContain(reference)
+    const record = await prisma.paystackPayment.findUnique({ where: { reference } })
+    expect(record.sale_id).toBe(sale.body.data.id)
+  })
+
+  it('refunds an unmatched payment and removes it once Paystack confirms', async () => {
+    const reference = ref()
+    await charge(reference)
+    const { id } = (await prisma.paystackPayment.findUnique({ where: { reference } }))
+
+    const res = await refundUnmatched(id)
+    expect(res.status).toBe(202)
+    expect(createRefund).toHaveBeenCalledWith(reference)
+    expect(res.body.data.refund_requested_at).not.toBeNull()
+
+    const again = await refundUnmatched(id)
+    expect(again.status).toBe(422)
+
+    await refundEvent('refund.processed', reference)
+    expect(references(await unmatched())).not.toContain(reference)
+    expect((await prisma.paystackPayment.findUnique({ where: { id } })).refunded_at).not.toBeNull()
+  })
+
+  it('allows a retry after refund.failed', async () => {
+    const reference = ref()
+    await charge(reference)
+    const { id } = await prisma.paystackPayment.findUnique({ where: { reference } })
+    await refundUnmatched(id)
+
+    await refundEvent('refund.failed', reference)
+
+    expect((await prisma.paystackPayment.findUnique({ where: { id } })).refund_requested_at).toBeNull()
+    expect((await refundUnmatched(id)).status).toBe(202)
+  })
+
+  it('refuses to refund a payment that belongs to a sale', async () => {
+    const reference = ref()
+    await cardSale(reference)
+    await charge(reference)
+    const { id } = await prisma.paystackPayment.findUnique({ where: { reference } })
+
+    const res = await refundUnmatched(id)
+    expect(res.status).toBe(422)
+    expect(res.body.error.details[0].message).toMatch(/sales page/i)
+    expect(createRefund).not.toHaveBeenCalled()
+  })
+})

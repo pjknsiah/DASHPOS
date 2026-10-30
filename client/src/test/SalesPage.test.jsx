@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 
 vi.mock('../layouts/DashboardLayout', () => ({ DashboardLayout: ({ children }) => <div>{children}</div> }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('../services/payments', () => ({ paymentsService: { unmatched: vi.fn().mockResolvedValue({ data: { data: [] } }), refundUnmatched: vi.fn() } }))
 vi.mock('../services/sales', () => ({
   salesService: { list: vi.fn(), get: vi.fn(), refund: vi.fn() },
 }))

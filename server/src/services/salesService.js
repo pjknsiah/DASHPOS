@@ -164,6 +164,11 @@ async function createSale({ items, customer_id, payment_method, amount_paid, dis
       },
     })
 
+    // Link the Paystack charge recorded by the charge.success webhook, if it arrived first
+    if (reference) {
+      await tx.paystackPayment.updateMany({ where: { reference, sale_id: null }, data: { sale_id: newSale.id } })
+    }
+
     // Deduct stock and create inventory logs. The decrement is conditional on
     // there still being enough stock, so concurrent sales cannot oversell.
     for (const item of saleItems) {

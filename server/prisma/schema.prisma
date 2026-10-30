@@ -118,10 +118,11 @@ model Sale {
   created_at            DateTime      @default(now())
   updated_at            DateTime      @updatedAt
 
-  user       User       @relation(fields: [user_id], references: [id])
-  customer   Customer?  @relation(fields: [customer_id], references: [id], onDelete: SetNull)
-  sale_items SaleItem[]
-  payments   Payment[]
+  user             User             @relation(fields: [user_id], references: [id])
+  customer         Customer?        @relation(fields: [customer_id], references: [id], onDelete: SetNull)
+  sale_items       SaleItem[]
+  payments         Payment[]
+  paystack_payment PaystackPayment?
 
   @@index([transaction_id])
   @@index([created_at])
@@ -190,4 +191,24 @@ model Settings {
   value      String
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
+}
+
+// A successful Paystack charge reported by the charge.success webhook.
+// sale_id stays null if the POS never created a sale for it (e.g. the
+// browser closed after paying); managers then see it as unmatched.
+model PaystackPayment {
+  id                  String    @id @default(uuid())
+  reference           String    @unique
+  amount              Int // pesewas
+  currency            String
+  channel             String?
+  customer_email      String?
+  paid_at             DateTime?
+  sale_id             String?   @unique
+  refund_requested_at DateTime?
+  refunded_at         DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  sale Sale? @relation(fields: [sale_id], references: [id], onDelete: SetNull)
 }

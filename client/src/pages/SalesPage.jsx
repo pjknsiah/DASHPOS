@@ -8,6 +8,7 @@ import { Table } from '../components/Table'
 import { Pagination } from '../components/Pagination'
 import { Badge } from '../components/Badge'
 import { Receipt } from '../components/Receipt'
+import { UnmatchedPayments } from '../components/UnmatchedPayments'
 import { salesService } from '../services/sales'
 import { useSettings } from '../hooks/useSettings'
 import { formatCurrency } from '../utils/formatCurrency'
@@ -126,6 +127,8 @@ export default function SalesPage() {
           <h1 className="text-2xl font-bold text-gray-900">Sales</h1>
           <p className="text-sm text-gray-500 mt-1">Past sales, receipts and refunds</p>
         </div>
+
+        <UnmatchedPayments />
 
         <div className="flex flex-wrap items-end gap-4">
           <Input label="From" type="date" value={startDate} onChange={changeFilter(setStartDate)} />

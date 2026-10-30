@@ -1,8 +1,8 @@
 const express = require('express')
 const { body, param } = require('express-validator')
-const { authenticate } = require('../middleware/auth')
+const { authenticate, authorize } = require('../middleware/auth')
 const validate = require('../middleware/validate')
-const { initialize, verify, webhook } = require('../controllers/paystackController')
+const { initialize, verify, webhook, listUnmatched, refundUnmatched } = require('../controllers/paystackController')
 
 const router = express.Router()
 
@@ -33,6 +33,15 @@ router.get(
     validate,
   ],
   verify
+)
+
+// Paystack charges with no sale (e.g. the browser closed after paying)
+router.get('/paystack/unmatched', authorize(['ADMIN', 'MANAGER']), listUnmatched)
+router.post(
+  '/paystack/unmatched/:id/refund',
+  authorize(['ADMIN', 'MANAGER']),
+  [param('id').isUUID().withMessage('Valid payment ID required'), validate],
+  refundUnmatched
 )
 
 module.exports = router

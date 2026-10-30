@@ -16,4 +16,10 @@ export const paymentsService = {
    */
   verify: (reference) =>
     api.get(`/payments/paystack/verify/${encodeURIComponent(reference)}`),
+
+  /** Paystack charges that never became a sale (Manager/Admin). */
+  unmatched: () => api.get('/payments/paystack/unmatched'),
+
+  /** Refund an unmatched Paystack charge (completes when Paystack confirms). */
+  refundUnmatched: (id) => api.post(`/payments/paystack/unmatched/${id}/refund`),
 }
