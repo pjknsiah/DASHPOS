@@ -31,10 +31,15 @@ app.use(
   })
 )
 
-// Request parsing — capture rawBody for Paystack webhook signature verification
+// Request parsing. JSON bodies are small (product images are multipart, via
+// multer), so keep the limit low. Only the Paystack webhook needs the exact
+// raw body, to check its signature.
+const PAYSTACK_WEBHOOK_PATH = '/api/payments/paystack/webhook'
 app.use(express.json({
-  limit: '10mb',
-  verify: (req, _res, buf) => { req.rawBody = buf.toString() },
+  limit: '100kb',
+  verify: (req, _res, buf) => {
+    if (req.originalUrl.split('?')[0] === PAYSTACK_WEBHOOK_PATH) req.rawBody = buf.toString()
+  },
 }))
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser())

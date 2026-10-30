@@ -9,6 +9,20 @@ function errorHandler(err, req, res, next) {
     logger.error(err.message)
   }
 
+  // Body parser errors: malformed JSON (400), body over the size limit (413)
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_JSON', message: 'Request body is not valid JSON' },
+    })
+  }
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      success: false,
+      error: { code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large' },
+    })
+  }
+
   // Handle Prisma errors
   if (err.code === 'P2002') {
     return res.status(409).json({
