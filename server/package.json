@@ -48,6 +48,9 @@
     "collectCoverageFrom": [
       "src/**/*.js",
       "!src/app.js"
+    ],
+    "setupFiles": [
+      "<rootDir>/jest.setup.js"
     ]
   }
 }
